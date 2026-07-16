@@ -1,0 +1,17 @@
+services:
+  honeypot:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # :Z relabels the bind mount for SELinux-enforcing hosts (e.g. Fedora);
+      # harmless no-op on hosts without SELinux.
+      - ./data:/srv/app/data:Z
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
