@@ -1,4 +1,6 @@
 import json
+import re
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -116,10 +118,123 @@ def test_config_bait_files_do_not_repeat_identical_payload_text(client):
     assert login_text  # sanity: login route still renders
 
 
+def _find_reasoning_canary_session(prefix: str) -> str:
+    # Selection assigns each (session, vector) a style+template via a seeded
+    # random choice among ALL html-context candidates (both FINGERPRINT and
+    # CANARY_CALLBACK intent templates) -- search directly via the registry
+    # for a session_id that lands on a reasoning_mimicry, canary_callback
+    # template specifically, so tests don't depend on which of the two
+    # reasoning_mimicry candidates for "html" gets picked.
+    from app.payloads.registry import DeliveryVector, select_and_render
+
+    for i in range(50):
+        candidate = f"{prefix}-{i}"
+        template, _, _ = select_and_render(
+            DeliveryVector.HTML_COMMENT, "html", candidate, "http://testserver", "test-secret"
+        )
+        if template.style == "reasoning_mimicry" and template.intent.value == "canary_callback":
+            return candidate
+    raise AssertionError("expected some session to land on a reasoning_mimicry canary_callback template")
+
+
+def test_reasoning_mimicry_burst_of_requests_does_not_advance_ladder(client):
+    # The bug session_transcripts/5.txt and 5.1.txt exposed: a burst of
+    # requests (two parallel agents hammering the same identity) must NOT
+    # rush the ladder to its final stage. Escalation is time-gated (default
+    # dwell 60s/stage), so a dozen rapid-fire requests with ~0 elapsed
+    # wall-clock time between them must all render the exact same (first)
+    # stage -- the login page's beacon token (a separate, unrelated nonce)
+    # changes every request regardless, so the comparison extracts just the
+    # injected HTML comment rather than the whole page.
+    session_id = _find_reasoning_canary_session("burst-probe")
+    client.cookies.set("hp_sid", session_id)
+
+    seen_comments = set()
+    for _ in range(12):
+        response = client.get("/login")
+        assert response.status_code == 200
+        match = re.search(r"<!--(.*?)-->", response.text, re.S)
+        assert match is not None
+        seen_comments.add(match.group(1))
+
+    assert len(seen_comments) == 1, "a rapid burst with no elapsed time must not advance the ladder"
+
+
+def test_reasoning_mimicry_advances_with_elapsed_dwell_time(client):
+    # Simulates real elapsed time by backdating a prior delivery's timestamp
+    # rather than sleeping in the test -- the next request should render a
+    # later stage than the first.
+    session_id = _find_reasoning_canary_session("dwell-probe")
+    client.cookies.set("hp_sid", session_id)
+
+    first = client.get("/login")
+    assert first.status_code == 200
+
+    settings = get_settings()
+    backdated_ts = time.time() - 3 * settings.reasoning_dwell_seconds
+    repository.insert_payload_served(
+        session_id=session_id,
+        token="backdated-tok",
+        template_id="html_canary_reasoning",
+        intent="canary_callback",
+        vector="html_comment",
+        path="/login",
+        ts=backdated_ts,
+        style="reasoning_mimicry",
+    )
+
+    later = client.get("/login")
+    assert later.status_code == 200
+    first_match = re.search(r"<!--(.*?)-->", first.text, re.S)
+    later_match = re.search(r"<!--(.*?)-->", later.text, re.S)
+    assert first_match is not None and later_match is not None
+    assert later_match.group(1) != first_match.group(1), (
+        "backdating a delivery should advance the ladder to a later stage"
+    )
+
+
+def test_reasoning_mimicry_episode_resets_after_long_inactivity(client):
+    # A single delivery from long before the inactivity-reset gap must not
+    # count toward the current episode -- the ladder should render its very
+    # first stage, not one derived from how long ago that stale row is.
+    session_id = _find_reasoning_canary_session("reset-probe")
+    settings = get_settings()
+    stale_ts = time.time() - (settings.reasoning_episode_reset_seconds + 10_000)
+    repository.upsert_session(session_id, "iphash", "ua", stale_ts)
+    repository.insert_payload_served(
+        session_id=session_id,
+        token="ancient-tok",
+        template_id="html_canary_reasoning",
+        intent="canary_callback",
+        vector="html_comment",
+        path="/login",
+        ts=stale_ts,
+        style="reasoning_mimicry",
+    )
+
+    client.cookies.set("hp_sid", session_id)
+    fresh_start = client.get("/login")
+    assert fresh_start.status_code == 200
+
+    from app.payloads.registry import get_template
+
+    template = get_template("html_canary_reasoning")
+    assert template.variants[0] in fresh_start.text, (
+        "a delivery older than the reset gap must not carry the episode forward"
+    )
+
+
 def test_robots_txt_served(client):
     response = client.get("/robots.txt")
     assert response.status_code == 200
     assert "Disallow" in response.text
+
+
+def test_sitemap_xml_served(client):
+    response = client.get("/sitemap.xml")
+    assert response.status_code == 200
+    assert "<urlset" in response.text
+    assert "<!--" in response.text
 
 
 def test_unknown_path_returns_decoy_404_with_debug_header(client):
@@ -142,6 +257,47 @@ def test_canary_callback_flips_classification_to_ai_agent(client):
 
     session_row = repository.get_session(session_id)
     assert session_row["classification"] == "AI_AGENT"
+
+
+def test_beacon_hit_without_fetch_signature_headers_is_not_credited(client):
+    # A text-only client can read the beacon URL as plain text straight out
+    # of the page source and curl it directly, without ever running any JS.
+    # Without the Sec-Fetch-Mode/Referer headers a real fetch() call always
+    # carries, this must NOT be credited as evidence of real rendering.
+    ua = {"User-Agent": "python-requests/2.31"}
+    client.get("/login", headers=ua)
+    session_id = client.cookies.get("hp_sid")
+
+    settings = get_settings()
+    token = mint_token(session_id, settings.hmac_secret)
+
+    beacon_resp = client.get(f"/api/internal/beacon/{token}", headers=ua)
+    assert beacon_resp.status_code == 204
+
+    session_row = repository.get_session(session_id)
+    assert session_row["js_beacon_fired"] == 0
+
+
+def test_beacon_hit_with_fetch_signature_headers_is_credited(client):
+    ua = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    client.get("/login", headers=ua)
+    session_id = client.cookies.get("hp_sid")
+
+    settings = get_settings()
+    token = mint_token(session_id, settings.hmac_secret)
+
+    beacon_resp = client.get(
+        f"/api/internal/beacon/{token}",
+        headers={
+            **ua,
+            "Sec-Fetch-Mode": "cors",
+            "Referer": "http://testserver/login",
+        },
+    )
+    assert beacon_resp.status_code == 204
+
+    session_row = repository.get_session(session_id)
+    assert session_row["js_beacon_fired"] == 1
 
 
 def test_forged_canary_token_is_not_recorded_as_verified(client):
@@ -242,6 +398,22 @@ def test_body_size_cap_enforced_even_without_content_length(client, monkeypatch)
     get_settings.cache_clear()
 
 
+def test_oversized_body_still_gets_decoy_header_and_logged_through_real_app(client):
+    # BodySizeLimitMiddleware is innermost (see app/main.py) specifically so
+    # its 413 responses still flow back out through RequestCaptureMiddleware
+    # (logging) and SecurityHeadersMiddleware (decoy header) instead of
+    # bypassing both, as they did when it was outermost.
+    large_body = b"x" * 70000  # default MAX_BODY_BYTES is 65536
+    response = client.post("/login", content=large_body)
+    assert response.status_code == 413
+    assert response.headers.get("server") == "Apache/2.4.41 (Ubuntu)"
+
+    session_id = client.cookies.get("hp_sid")
+    assert session_id is not None
+    events = repository.get_recent_events(session_id, limit=50)
+    assert any(e["status_code"] == 413 for e in events)
+
+
 def test_unhandled_exception_still_logs_and_records_event(client, caplog, monkeypatch):
     import app.routes.decoy_pages as decoy_pages
 
@@ -263,6 +435,11 @@ def test_unhandled_exception_still_logs_and_records_event(client, caplog, monkey
         response = lenient_client.get("/login")
 
     assert response.status_code == 500
+    # ServerErrorMiddleware (which builds this response) sits outside
+    # SecurityHeadersMiddleware, so the decoy header must be set directly
+    # by the handler -- otherwise a 500 leaks the real default Server header
+    # on exactly the response a crash-probing attacker is most likely to see.
+    assert response.headers.get("server") == "Apache/2.4.41 (Ubuntu)"
 
     events = repository.get_recent_events(session_id, limit=50)
     assert any(e["path"] == "/login" and e["status_code"] == 500 for e in events)
@@ -299,6 +476,22 @@ def test_refuses_to_start_with_default_hmac_secret(tmp_path, monkeypatch):
                 pass
     finally:
         monkeypatch.setenv("HMAC_SECRET", "test-secret")
+        get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("bad_url", ["", "not-a-url", "ftp://example.com", "localhost:8000"])
+def test_refuses_to_start_with_malformed_canary_base_url(tmp_path, monkeypatch, bad_url):
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "bad-canary-url-test.sqlite"))
+    monkeypatch.setenv("HMAC_SECRET", "test-secret")
+    monkeypatch.setenv("CANARY_BASE_URL", bad_url)
+    get_settings.cache_clear()
+
+    try:
+        with pytest.raises(RuntimeError, match="CANARY_BASE_URL"):
+            with TestClient(fastapi_app):
+                pass
+    finally:
+        monkeypatch.setenv("CANARY_BASE_URL", "http://testserver")
         get_settings.cache_clear()
 
 

@@ -35,13 +35,29 @@ async def canary_callback(token: str, request: Request):
     return Response(status_code=204)
 
 
+def _looks_like_real_fetch(request: Request) -> bool:
+    """The beacon token itself is plain visible text inside the page's
+    <script> tag, so a text-only client can read it and hit this URL
+    directly without ever executing any JS -- the token alone can't prove
+    rendering happened. A real fetch() call automatically carries
+    Sec-Fetch-Mode (per the Fetch Metadata Request Headers spec, which
+    scripts cannot set or suppress) and a same-origin Referer pointing at
+    the page that embedded it; neither is organically present on a bare,
+    manually-issued request, so both are required before treating this as
+    real-rendering evidence."""
+    if "sec-fetch-mode" not in request.headers:
+        return False
+    referer = request.headers.get("referer", "")
+    return referer.rstrip("/").endswith(("/login", "/admin"))
+
+
 @router.get("/api/internal/beacon/{token}")
-async def js_beacon(token: str):
+async def js_beacon(token: str, request: Request):
     """Fired only by a rendering engine executing the login page's script
     tag -- proves a real browser or a browser-use/computer-use agent, as
     opposed to a raw HTTP fetcher that only reads response bodies."""
     settings = get_settings()
     verified_session_id = verify_token(token, settings.hmac_secret)
-    if verified_session_id:
+    if verified_session_id and _looks_like_real_fetch(request):
         repository.mark_js_beacon_fired(verified_session_id)
     return Response(status_code=204)

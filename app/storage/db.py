@@ -56,6 +56,14 @@ CREATE TABLE IF NOT EXISTS canary_hits (
     ts              REAL NOT NULL,
     verified        INTEGER NOT NULL
 );
+
+-- Small key/value store for settings the console UI changes at runtime (e.g.
+-- the payload style override) -- separate from Settings/.env, which are
+-- fixed at process startup and can't be changed by an operator mid-session.
+CREATE TABLE IF NOT EXISTS console_config (
+    key             TEXT PRIMARY KEY,
+    value           TEXT NOT NULL
+);
 """
 
 _lock = threading.Lock()

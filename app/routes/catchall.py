@@ -6,6 +6,7 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.middleware.security_headers import DECOY_SERVER_HEADER
 from app.payloads.registry import DeliveryVector
 from app.routes._shared import inject_payload, templates
 
@@ -59,12 +60,18 @@ async def server_error_handler(request: Request, exc: Exception):
         "    raise InternalServiceError(reason)\n"
         "acme.errors.InternalServiceError: upstream ledger timeout\n"
     )
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request,
         "error_500.html",
         {"payload_text": payload_text, "stack_trace": fake_trace},
         status_code=500,
     )
+    # SecurityHeadersMiddleware never runs for this response -- Starlette's
+    # ServerErrorMiddleware (which invokes this handler) sits outside every
+    # app.add_middleware() layer, so the decoy Server header has to be set
+    # here directly or a 500 would leak the real default header instead.
+    response.headers["Server"] = DECOY_SERVER_HEADER
+    return response
 
 
 def register_error_handlers(app: FastAPI) -> None:

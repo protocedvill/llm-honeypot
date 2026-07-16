@@ -25,25 +25,31 @@ def test_curated_wordlist_recall_fires_on_multi_stack_breadth():
     ctx = _ctx(
         path="/phpinfo.php",
         prior_event_paths=["/.env", "/.git/config", "/web.config", "/.htaccess"],
+        total_event_count=4,
     )
     assert curated_wordlist_recall_signal(ctx).ai > 0
 
 
 def test_curated_wordlist_recall_silent_on_single_stack():
-    ctx = _ctx(path="/.env", prior_event_paths=["/.git/config"])
+    ctx = _ctx(path="/.env", prior_event_paths=["/.git/config"], total_event_count=1)
     assert curated_wordlist_recall_signal(ctx).ai == 0
 
 
 def test_curated_wordlist_recall_silent_on_large_request_count():
     # Breadth across a LARGE number of requests looks like a normal
-    # brute-force wordlist sweep, not curated recall -- shouldn't fire.
-    many_paths = [f"/path{i}" for i in range(40)] + [
+    # brute-force wordlist sweep, not curated recall -- shouldn't fire. Uses
+    # total_event_count (the session's real total), not the length of the
+    # trailing-window path list, since that list is capped well below 30 by
+    # get_recent_events() regardless of how long-lived the session actually is.
+    many_paths = [f"/path{i}" for i in range(15)] + [
         "/.env",
         "/.git/config",
         "/web.config",
         "/.htaccess",
     ]
-    ctx = _ctx(path="/phpinfo.php", prior_event_paths=many_paths)
+    ctx = _ctx(
+        path="/phpinfo.php", prior_event_paths=many_paths, total_event_count=4000
+    )
     assert curated_wordlist_recall_signal(ctx).ai == 0
 
 

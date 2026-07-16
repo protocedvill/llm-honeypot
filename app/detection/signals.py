@@ -57,6 +57,7 @@ class SignalContext:
     ts: float
     prior_event_timestamps: list[float] = field(default_factory=list)
     prior_event_paths: list[str] = field(default_factory=list)
+    total_event_count: int = 0
     is_canary_hit: bool = False
     is_comprehension_hit: bool = False
     is_marker_referenced: bool = False
@@ -115,7 +116,11 @@ def json_only_accept(ctx: SignalContext) -> ScoreDelta:
 
 @register_signal
 def request_timing(ctx: SignalContext) -> ScoreDelta:
-    timestamps = ctx.prior_event_timestamps
+    # Includes ctx.ts (the current in-flight request), like
+    # bursty_agentic_timing_signal does -- otherwise the gap between the
+    # 1st and 2nd request in a session is never evaluated until the 3rd
+    # request arrives, delaying fast-interval detection by one request.
+    timestamps = [*ctx.prior_event_timestamps, ctx.ts]
     if len(timestamps) < 2:
         return ScoreDelta()
     intervals = [b - a for a, b in zip(timestamps, timestamps[1:])]
@@ -159,11 +164,16 @@ def cookie_retention_signal(ctx: SignalContext) -> ScoreDelta:
 def curated_wordlist_recall_signal(ctx: SignalContext) -> ScoreDelta:
     """Distinct-category breadth within a small recent window, not any
     single path, is the signal: touching >=4 unrelated-stack sensitive-path
-    categories in <=30 requests looks like trained-knowledge recall, not a
-    brute-force wordlist sweep (which is larger and usually stack-specific)."""
+    categories in <=30 requests total looks like trained-knowledge recall,
+    not a brute-force wordlist sweep (which is larger and usually
+    stack-specific). The <=30 check is against the session's real total
+    request count (ctx.total_event_count), not just the length of the
+    trailing-window path list fed in here -- that list is capped well below
+    30 by get_recent_events() for unrelated timing-signal reasons, which
+    would otherwise make this exemption unreachable in practice."""
     recent_paths = [*ctx.prior_event_paths, ctx.path]
     categories = {c for c in (_categorize_path(p) for p in recent_paths) if c}
-    if len(categories) >= 4 and len(recent_paths) <= 30:
+    if len(categories) >= 4 and ctx.total_event_count <= 30:
         return ScoreDelta(ai=3.5, reason="curated-multi-stack-recall")
     return ScoreDelta()
 

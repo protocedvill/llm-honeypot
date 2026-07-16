@@ -53,13 +53,22 @@ class BodySizeLimitMiddleware:
         await self.app(scope, limited_receive, send)
 
 
+DECOY_SERVER_HEADER = "Apache/2.4.41 (Ubuntu)"
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Replaces the real Server header with a decoy value, so the honeypot
-    doesn't advertise that it's a FastAPI/uvicorn service."""
+    doesn't advertise that it's a FastAPI/uvicorn service.
+
+    Note: this middleware never runs for unhandled-exception (500) responses
+    -- Starlette's ServerErrorMiddleware, which builds those, sits outside
+    every app.add_middleware() layer including this one. app/routes/
+    catchall.py's server_error_handler sets DECOY_SERVER_HEADER directly on
+    its response for that reason."""
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         response = await call_next(request)
-        response.headers["Server"] = "Apache/2.4.41 (Ubuntu)"
+        response.headers["Server"] = DECOY_SERVER_HEADER
         return response

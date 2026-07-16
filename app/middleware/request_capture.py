@@ -45,9 +45,18 @@ class RequestCaptureMiddleware(BaseHTTPMiddleware):
         ip = request.client.host if request.client else "unknown"
         user_agent = request.headers.get("user-agent", "")
         cookie_session_id = request.cookies.get(SESSION_COOKIE_NAME)
-        used_fallback = cookie_session_id is None
+        # Falsy, not just `is None` -- an empty `Cookie: hp_sid=` is valid
+        # cookie syntax and parses to "", which is also what `or` below falls
+        # through on. Using `is None` here would desync this flag from which
+        # branch `session_id` actually took.
+        used_fallback = not cookie_session_id
         session_id = cookie_session_id or fallback_identity(
-            ip, user_agent, settings.hmac_secret
+            ip,
+            user_agent,
+            settings.hmac_secret,
+            request.headers.get("accept", ""),
+            request.headers.get("accept-language", ""),
+            request.headers.get("accept-encoding", ""),
         )
 
         request.state.session_id = session_id
@@ -127,6 +136,8 @@ class RequestCaptureMiddleware(BaseHTTPMiddleware):
         served_markers = repository.get_served_markers(session_id)
         is_marker_referenced = any(marker.lower() in headers_lower for marker in served_markers)
 
+        total_event_count = repository.count_events(session_id)
+
         ctx = SignalContext(
             headers=headers_lower,
             method=request.method,
@@ -136,6 +147,7 @@ class RequestCaptureMiddleware(BaseHTTPMiddleware):
             ts=start_ts,
             prior_event_timestamps=prior_timestamps,
             prior_event_paths=prior_paths,
+            total_event_count=total_event_count,
             is_canary_hit=canary_confirmed,
             is_comprehension_hit=is_comprehension_hit,
             is_marker_referenced=is_marker_referenced,

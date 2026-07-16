@@ -13,5 +13,6 @@ RUN useradd --create-home --uid 1000 honeypot \
 USER honeypot
 
 EXPOSE 8000
+EXPOSE 8001
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-server-header"]
+CMD ["python", "-m", "app.run"]

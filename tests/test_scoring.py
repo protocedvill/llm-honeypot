@@ -59,10 +59,24 @@ def test_sub_200ms_regular_timing_pushes_toward_bot():
     ctx = _ctx(
         headers={"user-agent": "curl/8.4.0"},
         prior_event_timestamps=[1000.0, 1000.05, 1000.10],
+        ts=1000.15,
     )
     result = classify(ctx)
     assert result.bot_score > 0
     assert result.label == NON_AI_BOT
+
+
+def test_sub_200ms_interval_detected_on_second_request_not_delayed_to_third():
+    # Only 1 prior timestamp exists (this is the session's 2nd request) --
+    # the interval between it and the current in-flight request must still
+    # be evaluated, not silently skipped until a 3rd request arrives.
+    ctx = _ctx(
+        headers={"user-agent": "curl/8.4.0"},
+        prior_event_timestamps=[1000.0],
+        ts=1000.05,
+    )
+    result = classify(ctx)
+    assert result.bot_score > 0
 
 
 def test_curated_multi_stack_recall_alone_is_ai_agent():
@@ -80,3 +94,11 @@ def test_curated_multi_stack_recall_alone_is_ai_agent():
 def test_marker_reference_alone_is_ai_agent():
     ctx = _ctx(is_marker_referenced=True)
     assert classify(ctx).label == AI_AGENT
+
+
+def test_ai_score_threshold_with_beacon_fired_is_human_copilot():
+    # js_beacon_fired is independent proof a real rendering engine executed
+    # the page -- that disambiguation must apply no matter which signal
+    # pushed the session into AI-agent territory, not only a canary hit.
+    ctx = _ctx(is_marker_referenced=True, js_beacon_fired=True)
+    assert classify(ctx).label == HUMAN_WITH_AI_COPILOT

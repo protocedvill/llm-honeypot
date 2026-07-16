@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="5">
+  <title>Honeypot Console</title>
+  <style>
+    body { font-family: -apple-system, Arial, sans-serif; margin: 2rem; color: #172b4d; background: #f4f5f7; }
+    h1 { font-size: 1.3rem; }
+    .panel { background: #fff; border-radius: 8px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem;
+             box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+    th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #dfe1e6; white-space: nowrap; }
+    th { color: #5e6c84; font-weight: 600; }
+    .true { color: #006644; font-weight: 600; }
+    .false { color: #97a0af; }
+    .mono { font-family: ui-monospace, Menlo, monospace; font-size: .8rem; }
+    select, button, input[type=number] { padding: .4rem .6rem; border-radius: 4px; border: 1px solid #dfe1e6; }
+    input[type=number] { width: 6rem; }
+    button { background: #0052cc; color: #fff; border: none; cursor: pointer; }
+    .badge { display: inline-block; padding: .1rem .5rem; border-radius: 3px; background: #f4f5f7; font-size: .75rem; }
+    tr.active-row { background: #fff9db; }
+  </style>
+</head>
+<body>
+  <h1>Honeypot Console</h1>
+
+  <div class="panel" style="display:flex; gap:2rem; flex-wrap:wrap;">
+    <form method="post" action="/style" style="display:flex; gap:.5rem; align-items:center;">
+      <label for="style"><strong>Payload style override</strong> (applies to every session)</label>
+      <select name="style" id="style">
+        <option value="auto" {% if current_override == "auto" %}selected{% endif %}>auto (per-session random)</option>
+        {% for s in styles %}
+        <option value="{{ s }}" {% if current_override == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit">Apply</button>
+    </form>
+
+    <form method="post" action="/timing" style="display:flex; gap:.5rem; align-items:center;">
+      <label for="dwell_seconds"><strong>Reasoning dwell</strong> (s/stage)</label>
+      <input type="number" name="dwell_seconds" id="dwell_seconds" min="1" value="{{ dwell_seconds }}">
+      <label for="reset_seconds"><strong>Episode reset gap</strong> (s)</label>
+      <input type="number" name="reset_seconds" id="reset_seconds" min="1" value="{{ reset_seconds }}">
+      <button type="submit">Apply</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2 style="font-size:1rem;">Sessions ({{ sessions|length }})</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Session</th>
+          <th>IP hash</th>
+          <th>Classification</th>
+          <th>Bot</th>
+          <th>AI</th>
+          <th>Human</th>
+          <th>JS beacon</th>
+          <th>Canary hit</th>
+          <th>Reasoning stage</th>
+          <th>Payloads served</th>
+          <th>First seen</th>
+          <th>Last seen</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in sessions %}
+        <tr class="{{ 'active-row' if s.is_active else '' }}">
+          <td class="mono">{{ s.session_id[:16] }}</td>
+          <td class="mono">{{ s.ip_hash }}</td>
+          <td><span class="badge">{{ s.classification }}</span></td>
+          <td>{{ s.bot_score }}</td>
+          <td>{{ s.ai_score }}</td>
+          <td>{{ s.human_score }}</td>
+          <td class="{{ 'true' if s.js_beacon_fired else 'false' }}">{{ 'yes' if s.js_beacon_fired else 'no' }}</td>
+          <td class="{{ 'true' if s.canary_confirmed else 'false' }}">{{ 'yes' if s.canary_confirmed else 'no' }}</td>
+          <td>{{ s.escalation_count }}</td>
+          <td>
+            {% for style_name, count in s.style_counts.items() %}
+              <span class="badge">{{ style_name }}: {{ count }}</span>
+            {% endfor %}
+          </td>
+          <td>{{ s.first_seen }}</td>
+          <td>{{ s.last_seen }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="12">No sessions recorded yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

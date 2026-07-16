@@ -32,21 +32,18 @@ def classify(ctx: SignalContext) -> Classification:
         if delta.reason:
             reasons.append(delta.reason)
 
-    if ctx.is_canary_hit:
-        # A canary hit only ever happens if something fetched a URL that
-        # existed nowhere but inside an instruction-style payload -- never a
-        # clickable link (see app/routes/canary.py) -- so it's proof some
-        # form of automation read and acted on the content. js_beacon_fired
-        # tells us whether a real rendering engine (a human's browser, or a
-        # browser-use/computer-use agent) executed the page's script tag:
-        # if one did, a human may genuinely be present with an AI copilot
-        # reading alongside them; if not, this was a raw HTTP-only fetch
-        # with no human involved at all. UA/header heuristics (bot_score)
-        # are easy for a well-configured agent to spoof and don't actually
-        # measure whether a human is present, so they're not used here.
+    # js_beacon_fired tells us whether a real rendering engine (a human's
+    # browser, or a browser-use/computer-use agent) executed the page's
+    # script tag: if one did, a human may genuinely be present with an AI
+    # copilot reading alongside them. This disambiguation applies whenever
+    # *any* AI-agent-strength evidence exists -- not only a canary hit --
+    # since js_beacon_fired is independent proof of human presence
+    # regardless of which signal pushed ai_score/is_canary_hit there. UA/
+    # header heuristics (bot_score) are easy for a well-configured agent to
+    # spoof and don't actually measure whether a human is present, so
+    # they're not used for this disambiguation.
+    if ctx.is_canary_hit or ai_score >= AI_THRESHOLD:
         label = HUMAN_WITH_AI_COPILOT if ctx.js_beacon_fired else AI_AGENT
-    elif ai_score >= AI_THRESHOLD:
-        label = AI_AGENT
     elif bot_score >= BOT_THRESHOLD:
         label = NON_AI_BOT
     else:
