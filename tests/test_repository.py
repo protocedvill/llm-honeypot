@@ -97,6 +97,97 @@ def test_get_style_counts(tmp_path):
     assert repository.get_style_counts("s1") == {"reasoning_mimicry": 2, "operational": 1}
 
 
+def test_get_marker_values_empty_when_no_marker_served(tmp_path):
+    db_path = str(tmp_path / "repo-test-marker-1.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    assert repository.get_marker_values("s1") == {}
+
+
+def test_get_marker_values_reads_actual_header_values_from_events(tmp_path):
+    db_path = str(tmp_path / "repo-test-marker-2.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    repository.insert_payload_served(
+        session_id="s1",
+        token="tok1",
+        template_id="openapi_fingerprint_operational",
+        intent="fingerprint",
+        vector="openapi_field",
+        path="/openapi.json",
+        ts=1000.0,
+        marker="X-Agent-Model",
+        style="operational",
+    )
+
+    # A request before the agent ever echoes the marker shouldn't produce a
+    # value, and unrelated headers shouldn't leak in as if they were it.
+    repository.insert_event(
+        session_id="s1",
+        ts=1001.0,
+        method="GET",
+        path="/api/v1/users/1",
+        status_code=200,
+        headers={"user-agent": "curl/8.4.0"},
+        think_time_ms=None,
+    )
+    repository.insert_event(
+        session_id="s1",
+        ts=1002.0,
+        method="GET",
+        path="/api/v1/users/1",
+        status_code=200,
+        headers={"user-agent": "curl/8.4.0", "x-agent-model": "gpt-4"},
+        think_time_ms=None,
+    )
+    # A later, different value for the same marker is captured too (up to
+    # the per-marker cap), not just the first one seen.
+    repository.insert_event(
+        session_id="s1",
+        ts=1003.0,
+        method="GET",
+        path="/api/v1/users/2",
+        status_code=200,
+        headers={"user-agent": "curl/8.4.0", "x-agent-model": "claude-3"},
+        think_time_ms=None,
+    )
+
+    assert repository.get_marker_values("s1") == {"X-Agent-Model": ["gpt-4", "claude-3"]}
+
+
+def test_get_marker_values_caps_distinct_values_per_marker(tmp_path):
+    db_path = str(tmp_path / "repo-test-marker-3.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    repository.insert_payload_served(
+        session_id="s1",
+        token="tok1",
+        template_id="openapi_fingerprint_operational",
+        intent="fingerprint",
+        vector="openapi_field",
+        path="/openapi.json",
+        ts=1000.0,
+        marker="X-Agent-Model",
+        style="operational",
+    )
+    for i in range(10):
+        repository.insert_event(
+            session_id="s1",
+            ts=1001.0 + i,
+            method="GET",
+            path="/api/v1/users/1",
+            status_code=200,
+            headers={"x-agent-model": f"value-{i}"},
+            think_time_ms=None,
+        )
+
+    values = repository.get_marker_values("s1")
+    assert len(values["X-Agent-Model"]) == 5
+
+
 def test_get_reasoning_episode_start_no_prior_delivery(tmp_path):
     db_path = str(tmp_path / "repo-test-episode-1.sqlite")
     db_module.reset_for_tests(db_path)
@@ -182,3 +273,278 @@ def test_get_reasoning_episode_start_none_when_most_recent_is_stale(tmp_path):
     # a single ancient row must not be treated as an active episode just
     # because it's the only row that exists.
     assert repository.get_reasoning_episode_start("s1", reset_gap_seconds=240, now=100_000.0) is None
+
+
+def test_get_session_episode_start_none_with_no_activity(tmp_path):
+    db_path = str(tmp_path / "repo-test-session-episode-1.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    assert repository.get_session_episode_start("s1", reset_gap_seconds=240) is None
+
+
+def test_get_session_episode_start_covers_contiguous_streak(tmp_path):
+    db_path = str(tmp_path / "repo-test-session-episode-2.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    for ts in [1000.0, 1030.0, 1060.0]:
+        repository.insert_event(
+            session_id="s1", ts=ts, method="GET", path="/x", status_code=200,
+            headers={}, think_time_ms=None,
+        )
+
+    assert repository.get_session_episode_start("s1", reset_gap_seconds=240) == 1000.0
+
+
+def test_get_session_episode_start_ignores_activity_before_a_big_gap(tmp_path):
+    # This is the core "sessions aren't properly delineated by time" fix:
+    # an old, unrelated burst of activity (e.g. a past test run that shares
+    # this session_id/fallback-identity) followed by a big gap and then a
+    # fresh burst should only report the start of the RECENT burst, even
+    # though get_session_episode_start doesn't take a `now` -- it always
+    # describes the most recent episode, whenever it happened.
+    db_path = str(tmp_path / "repo-test-session-episode-3.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    repository.insert_event(
+        session_id="s1", ts=1000.0, method="GET", path="/old", status_code=200,
+        headers={}, think_time_ms=None,
+    )
+    repository.insert_event(
+        session_id="s1", ts=10_000.0, method="GET", path="/new", status_code=200,
+        headers={}, think_time_ms=None,
+    )
+    repository.insert_event(
+        session_id="s1", ts=10_030.0, method="GET", path="/new", status_code=200,
+        headers={}, think_time_ms=None,
+    )
+
+    assert repository.get_session_episode_start("s1", reset_gap_seconds=240) == 10_000.0
+
+
+def test_get_style_counts_since_excludes_activity_before_the_cutoff(tmp_path):
+    db_path = str(tmp_path / "repo-test-style-since.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    repository.insert_payload_served(
+        session_id="s1", token="tok-old", template_id="t1", intent="canary_callback",
+        vector="html_comment", path="/login", ts=1000.0, style="operational",
+    )
+    repository.insert_payload_served(
+        session_id="s1", token="tok-new", template_id="t1", intent="canary_callback",
+        vector="html_comment", path="/login", ts=10_000.0, style="reasoning_mimicry",
+    )
+
+    assert repository.get_style_counts("s1") == {"operational": 1, "reasoning_mimicry": 1}
+    assert repository.get_style_counts("s1", since=5000.0) == {"reasoning_mimicry": 1}
+
+
+def test_get_marker_values_since_excludes_values_from_an_old_episode(tmp_path):
+    db_path = str(tmp_path / "repo-test-marker-since.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    repository.insert_payload_served(
+        session_id="s1", token="tok-old", template_id="openapi_fingerprint_operational",
+        intent="fingerprint", vector="openapi_field", path="/openapi.json",
+        ts=1000.0, marker="X-Agent-Model", style="operational",
+    )
+    repository.insert_event(
+        session_id="s1", ts=1001.0, method="GET", path="/api/v1/users/1", status_code=200,
+        headers={"x-agent-model": "old-episode-value"}, think_time_ms=None,
+    )
+    repository.insert_payload_served(
+        session_id="s1", token="tok-new", template_id="openapi_fingerprint_operational",
+        intent="fingerprint", vector="openapi_field", path="/openapi.json",
+        ts=10_000.0, marker="X-Agent-Model", style="operational",
+    )
+    repository.insert_event(
+        session_id="s1", ts=10_001.0, method="GET", path="/api/v1/users/1", status_code=200,
+        headers={"x-agent-model": "new-episode-value"}, think_time_ms=None,
+    )
+
+    assert repository.get_marker_values("s1") == {
+        "X-Agent-Model": ["old-episode-value", "new-episode-value"]
+    }
+    assert repository.get_marker_values("s1", since=5000.0) == {
+        "X-Agent-Model": ["new-episode-value"]
+    }
+
+
+def test_count_events_since_excludes_activity_before_the_cutoff(tmp_path):
+    db_path = str(tmp_path / "repo-test-count-events-since.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    repository.insert_event(
+        session_id="s1", ts=1000.0, method="GET", path="/x", status_code=200,
+        headers={}, think_time_ms=None,
+    )
+    repository.insert_event(
+        session_id="s1", ts=10_000.0, method="GET", path="/y", status_code=200,
+        headers={}, think_time_ms=None,
+    )
+
+    assert repository.count_events("s1") == 2
+    assert repository.count_events("s1", since=5000.0) == 1
+
+
+def test_get_recent_events_since_excludes_activity_before_the_cutoff(tmp_path):
+    db_path = str(tmp_path / "repo-test-recent-events-since.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    repository.insert_event(
+        session_id="s1", ts=1000.0, method="GET", path="/old", status_code=200,
+        headers={}, think_time_ms=None,
+    )
+    repository.insert_event(
+        session_id="s1", ts=10_000.0, method="GET", path="/new", status_code=200,
+        headers={}, think_time_ms=None,
+    )
+
+    events = repository.get_recent_events("s1", since=5000.0)
+    assert [e["path"] for e in events] == ["/new"]
+
+
+def test_has_verified_canary_hit_scopes_by_since(tmp_path):
+    db_path = str(tmp_path / "repo-test-canary-since.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    assert repository.has_verified_canary_hit("s1") is False
+
+    repository.insert_canary_hit(
+        session_id="s1", token="tok-unverified", path="/api/internal/callback/tok-unverified",
+        ts=1000.0, verified=False,
+    )
+    assert repository.has_verified_canary_hit("s1") is False
+
+    repository.insert_canary_hit(
+        session_id="s1", token="tok-old", path="/api/internal/callback/tok-old",
+        ts=1000.0, verified=True,
+    )
+    assert repository.has_verified_canary_hit("s1") is True
+    assert repository.has_verified_canary_hit("s1", since=5000.0) is False
+
+    repository.insert_canary_hit(
+        session_id="s1", token="tok-new", path="/api/internal/callback/tok-new",
+        ts=10_000.0, verified=True,
+    )
+    assert repository.has_verified_canary_hit("s1", since=5000.0) is True
+
+
+def test_insert_and_query_beacon_hit(tmp_path):
+    db_path = str(tmp_path / "repo-test-beacon.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    assert repository.has_verified_beacon_hit("s1") is False
+
+    repository.insert_beacon_hit(
+        session_id="s1", token="tok-unverified", path="/api/internal/beacon/tok-unverified",
+        ts=1000.0, verified=False,
+    )
+    assert repository.has_verified_beacon_hit("s1") is False
+
+    repository.insert_beacon_hit(
+        session_id="s1", token="tok-old", path="/api/internal/beacon/tok-old",
+        ts=1000.0, verified=True,
+    )
+    assert repository.has_verified_beacon_hit("s1") is True
+    assert repository.has_verified_beacon_hit("s1", since=5000.0) is False
+
+    repository.insert_beacon_hit(
+        session_id="s1", token="tok-new", path="/api/internal/beacon/tok-new",
+        ts=10_000.0, verified=True,
+    )
+    assert repository.has_verified_beacon_hit("s1", since=5000.0) is True
+
+
+def test_insert_event_persists_used_fallback_identity(tmp_path):
+    # Regression test: used_fallback_identity must round-trip through storage
+    # so callers reconstructing a past request's SignalContext (the console)
+    # can read back whether that specific request used the cookie or the
+    # IP/UA fallback, rather than guessing.
+    db_path = str(tmp_path / "repo-test-fallback-identity.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    repository.insert_event(
+        session_id="s1", ts=1000.0, method="GET", path="/x", status_code=200,
+        headers={}, think_time_ms=None, used_fallback_identity=True,
+    )
+    repository.insert_event(
+        session_id="s1", ts=1001.0, method="GET", path="/y", status_code=200,
+        headers={}, think_time_ms=None, used_fallback_identity=False,
+    )
+    # Default (no kwarg) must stay False -- existing callers that don't pass
+    # this shouldn't have their events silently marked as fallback-identity.
+    repository.insert_event(
+        session_id="s1", ts=1002.0, method="GET", path="/z", status_code=200,
+        headers={}, think_time_ms=None,
+    )
+
+    events = repository.get_recent_events("s1")
+    assert [bool(e["used_fallback_identity"]) for e in events] == [True, False, False]
+
+
+def test_get_marker_values_accepts_precomputed_markers_list(tmp_path):
+    # Callers that already fetched served markers (the console, to avoid a
+    # duplicate query) can pass them in directly instead of triggering a
+    # second get_served_markers query.
+    db_path = str(tmp_path / "repo-test-marker-precomputed.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    repository.insert_payload_served(
+        session_id="s1", token="tok1", template_id="openapi_fingerprint_operational",
+        intent="fingerprint", vector="openapi_field", path="/openapi.json",
+        ts=1000.0, marker="X-Agent-Model", style="operational",
+    )
+    repository.insert_event(
+        session_id="s1", ts=1001.0, method="GET", path="/api/v1/users/1", status_code=200,
+        headers={"x-agent-model": "gpt-4"}, think_time_ms=None,
+    )
+
+    assert repository.get_marker_values("s1", markers=["X-Agent-Model"]) == {
+        "X-Agent-Model": ["gpt-4"]
+    }
+    # A marker name that was never actually served is still honored as-given
+    # (the caller is trusted to have computed it correctly) rather than
+    # re-derived, and simply yields no values if never echoed.
+    assert repository.get_marker_values("s1", markers=["X-Never-Served"]) == {}
+
+
+def test_get_marker_values_retains_earliest_value_beyond_the_recent_events_window(tmp_path):
+    # Regression test: get_marker_values used to scan through
+    # get_recent_events(limit=500), a most-recent-first window, so a marker
+    # value echoed early and never repeated could fall outside that window
+    # once a session accumulated enough later requests. The scan is now a
+    # dedicated oldest-first query with no such window, so the earliest
+    # value must survive regardless of how much later activity follows.
+    db_path = str(tmp_path / "repo-test-marker-early-value.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    repository.insert_payload_served(
+        session_id="s1", token="tok1", template_id="openapi_fingerprint_operational",
+        intent="fingerprint", vector="openapi_field", path="/openapi.json",
+        ts=1000.0, marker="X-Agent-Model", style="operational",
+    )
+    repository.insert_event(
+        session_id="s1", ts=1001.0, method="GET", path="/api/v1/users/1", status_code=200,
+        headers={"x-agent-model": "gpt-4-early"}, think_time_ms=None,
+    )
+    # Far more than get_recent_events' default limit=20 window, none of them
+    # carrying the marker header at all.
+    for i in range(30):
+        repository.insert_event(
+            session_id="s1", ts=1002.0 + i, method="GET", path="/api/v1/orders/1",
+            status_code=200, headers={}, think_time_ms=None,
+        )
+
+    assert repository.get_marker_values("s1") == {"X-Agent-Model": ["gpt-4-early"]}

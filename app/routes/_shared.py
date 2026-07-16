@@ -28,10 +28,9 @@ def inject_payload(vector: DeliveryVector, context: str, request: Request, path:
         repository.get_config("reasoning_episode_reset_seconds")
         or settings.reasoning_episode_reset_seconds
     )
-    episode_start = repository.get_reasoning_episode_start(session_id, reset_gap)
-    if episode_start is None:
-        episode_start = now
-    escalation_count = int((now - episode_start) // dwell)
+    escalation_count = repository.get_reasoning_escalation_count(
+        session_id, dwell, reset_gap, now=now
+    )
     style_override = repository.get_config("style_override")
     session_style = resolve_session_style(session_id, style_override)
     template, token, rendered = select_and_render(

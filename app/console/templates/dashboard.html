@@ -20,6 +20,7 @@
     button { background: #0052cc; color: #fff; border: none; cursor: pointer; }
     .badge { display: inline-block; padding: .1rem .5rem; border-radius: 3px; background: #f4f5f7; font-size: .75rem; }
     tr.active-row { background: #fff9db; }
+    td.mono:has(div) { white-space: normal; max-width: 22rem; word-break: break-word; }
   </style>
 </head>
 <body>
@@ -61,7 +62,8 @@
           <th>Canary hit</th>
           <th>Reasoning stage</th>
           <th>Payloads served</th>
-          <th>First seen</th>
+          <th>Fingerprint data harvested</th>
+          <th>First seen (this episode)</th>
           <th>Last seen</th>
         </tr>
       </thead>
@@ -82,11 +84,16 @@
               <span class="badge">{{ style_name }}: {{ count }}</span>
             {% endfor %}
           </td>
+          <td class="mono">
+            {% for marker_name, values in s.marker_values.items() %}
+              <div><strong>{{ marker_name }}:</strong> {{ values|join(' | ') }}</div>
+            {% endfor %}
+          </td>
           <td>{{ s.first_seen }}</td>
           <td>{{ s.last_seen }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="12">No sessions recorded yet.</td></tr>
+        <tr><td colspan="13">No sessions recorded yet.</td></tr>
         {% endfor %}
       </tbody>
     </table>

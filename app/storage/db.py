@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS events (
     path            TEXT NOT NULL,
     status_code     INTEGER NOT NULL,
     headers_json    TEXT NOT NULL,
-    think_time_ms   REAL
+    think_time_ms   REAL,
+    used_fallback_identity INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
@@ -57,6 +58,15 @@ CREATE TABLE IF NOT EXISTS canary_hits (
     verified        INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS beacon_hits (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT NOT NULL REFERENCES sessions(session_id),
+    token           TEXT NOT NULL,
+    path            TEXT NOT NULL,
+    ts              REAL NOT NULL,
+    verified        INTEGER NOT NULL
+);
+
 -- Small key/value store for settings the console UI changes at runtime (e.g.
 -- the payload style override) -- separate from Settings/.env, which are
 -- fixed at process startup and can't be changed by an operator mid-session.
@@ -76,6 +86,7 @@ _connection: sqlite3.Connection | None = None
 _COLUMN_MIGRATIONS = [
     ("payloads_served", "marker", "TEXT"),
     ("payloads_served", "style", "TEXT"),
+    ("events", "used_fallback_identity", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

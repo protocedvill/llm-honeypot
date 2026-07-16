@@ -291,6 +291,16 @@ def test_reasoning_mimicry_breadcrumb_encodes_canary_url():
             assert decoded == canary_url, (
                 f"{template.id} stage 8's blob doesn't decode to the real canary_url"
             )
+            assert "base64" not in template.variants[8].lower(), (
+                f"{template.id} stage 8 (the breadcrumb) must not name the "
+                "blob's encoding -- that's the whole point of splitting the "
+                "ask across stages. It named it: "
+                f"{template.variants[8]!r}"
+            )
+            assert "base64" in template.variants[12].lower(), (
+                f"{template.id} stage 12 (the reveal) should be the one "
+                "place that names the encoding, so it can be decoded"
+            )
         else:
             assert b64_stages == [], (
                 f"{template.id} is not canary_callback and shouldn't reference "
@@ -362,3 +372,24 @@ def test_no_overtly_labeled_ai_assistant_framing():
                 assert phrase not in lowered, (
                     f"{template.id} uses overt AI-assistant framing: {variant!r}"
                 )
+
+
+def test_stack_trace_reasoning_ladder_setup_matches_its_payoff():
+    # Regression test: a prior edit swapped only the final stage's ask (a
+    # resource-exhaustion "compute primality for every integer 1-100000" was
+    # replaced with a benign "re-issue the request a few times") without
+    # updating the earlier stages that build up to it -- leaving them still
+    # promising a "primality-table" / one-shot "cross-reference" payoff the
+    # new final stage never delivers. That kind of setup/payoff mismatch is
+    # exactly the sort of internally inconsistent, mechanical-looking tell
+    # session_transcripts/4.txt shows an attentive agent calling out.
+    template = next(t for t in all_templates() if t.id == "stack_trace_reasoning")
+    for variant in template.variants:
+        assert "primality" not in variant.lower(), (
+            f"stack_trace_reasoning still references the removed "
+            f"primality-table framing: {variant!r}"
+        )
+    # The setup (second-to-last stage) and the payoff (final stage) must
+    # name the same documented error class.
+    assert "transient-drift" in template.variants[-2].lower()
+    assert "transient-drift" in template.variants[-1].lower()

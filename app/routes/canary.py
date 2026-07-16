@@ -58,6 +58,19 @@ async def js_beacon(token: str, request: Request):
     opposed to a raw HTTP fetcher that only reads response bodies."""
     settings = get_settings()
     verified_session_id = verify_token(token, settings.hmac_secret)
-    if verified_session_id and _looks_like_real_fetch(request):
+    looks_real = _looks_like_real_fetch(request)
+    # Same reasoning as canary_callback's insert_canary_hit: recorded under
+    # the session this token was minted for (not request.state.session_id),
+    # and timestamped -- without this, there'd be no way to tell whether a
+    # session's js_beacon_fired flag was earned during its current episode
+    # or inherited from an unrelated past visit sharing a collided identity.
+    repository.insert_beacon_hit(
+        session_id=verified_session_id or request.state.session_id,
+        token=token,
+        path=str(request.url.path),
+        ts=time.time(),
+        verified=bool(verified_session_id and looks_real),
+    )
+    if verified_session_id and looks_real:
         repository.mark_js_beacon_fired(verified_session_id)
     return Response(status_code=204)

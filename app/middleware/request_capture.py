@@ -175,6 +175,7 @@ class RequestCaptureMiddleware(BaseHTTPMiddleware):
             status_code=status_code,
             headers=_redact_headers(headers_lower),
             think_time_ms=think_time_ms,
+            used_fallback_identity=used_fallback,
         )
 
         # Only reachable when call_next returned normally -- if the route

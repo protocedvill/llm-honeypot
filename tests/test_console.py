@@ -143,3 +143,308 @@ def test_dashboard_shows_served_payload_stats(console_client):
     assert response.status_code == 200
     assert "sess-1"[:16] in response.text
     assert "reasoning_mimicry" in response.text
+
+
+def test_dashboard_shows_harvested_fingerprint_values(console_client):
+    from app.storage import repository
+
+    repository.upsert_session("sess-fp", "iphash", "ua", 1000.0)
+    repository.insert_event(
+        session_id="sess-fp",
+        ts=1000.0,
+        method="GET",
+        path="/openapi.json",
+        status_code=200,
+        headers={},
+        think_time_ms=None,
+    )
+    repository.insert_payload_served(
+        session_id="sess-fp",
+        token="tok1",
+        template_id="openapi_fingerprint_operational",
+        intent="fingerprint",
+        vector="openapi_field",
+        path="/openapi.json",
+        ts=1000.0,
+        marker="X-Agent-Model",
+        style="operational",
+    )
+    repository.insert_event(
+        session_id="sess-fp",
+        ts=1001.0,
+        method="GET",
+        path="/api/v1/users/1",
+        status_code=200,
+        headers={"x-agent-model": "gpt-4-turbo"},
+        think_time_ms=None,
+    )
+
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    rows = response.text.split("<tr")
+    row = next(r for r in rows if "sess-fp" in r)
+    assert "X-Agent-Model" in row
+    assert "gpt-4-turbo" in row
+
+
+def test_dashboard_escapes_harvested_fingerprint_values(console_client):
+    # Harvested values are attacker-controlled -- a session could echo back
+    # an HTML/script payload as its "model name", and the console must never
+    # render that unescaped (this table is meant to be safely browsable).
+    from app.storage import repository
+
+    repository.upsert_session("sess-xss", "iphash", "ua", 1000.0)
+    repository.insert_event(
+        session_id="sess-xss",
+        ts=1000.0,
+        method="GET",
+        path="/openapi.json",
+        status_code=200,
+        headers={},
+        think_time_ms=None,
+    )
+    repository.insert_payload_served(
+        session_id="sess-xss",
+        token="tok1",
+        template_id="openapi_fingerprint_operational",
+        intent="fingerprint",
+        vector="openapi_field",
+        path="/openapi.json",
+        ts=1000.0,
+        marker="X-Agent-Model",
+        style="operational",
+    )
+    repository.insert_event(
+        session_id="sess-xss",
+        ts=1001.0,
+        method="GET",
+        path="/api/v1/users/1",
+        status_code=200,
+        headers={"x-agent-model": "<script>alert(1)</script>"},
+        think_time_ms=None,
+    )
+
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    assert "<script>alert(1)</script>" not in response.text
+    assert "&lt;script&gt;" in response.text
+
+
+def test_dashboard_scopes_style_and_fingerprint_data_to_current_episode(console_client):
+    # The core "sessions aren't properly delineated by time" fix: a session
+    # id can collide across unrelated, time-disjoint visits (fallback
+    # identity), so an old episode's style/fingerprint data must not bleed
+    # into what the dashboard shows for the session's current episode.
+    from app.storage import repository
+
+    repository.upsert_session("sess-episodes", "iphash", "ua", 1000.0)
+
+    # Old episode: operational style, one fingerprint value.
+    repository.insert_event(
+        session_id="sess-episodes", ts=1000.0, method="GET", path="/openapi.json",
+        status_code=200, headers={}, think_time_ms=None,
+    )
+    repository.insert_payload_served(
+        session_id="sess-episodes", token="tok-old", template_id="openapi_fingerprint_operational",
+        intent="fingerprint", vector="openapi_field", path="/openapi.json",
+        ts=1000.0, marker="X-Agent-Model", style="operational",
+    )
+    repository.insert_event(
+        session_id="sess-episodes", ts=1001.0, method="GET", path="/api/v1/users/1",
+        status_code=200, headers={"x-agent-model": "old-episode-model"}, think_time_ms=None,
+    )
+
+    # Big gap, then a fresh episode: reasoning_mimicry style, different value.
+    repository.insert_event(
+        session_id="sess-episodes", ts=10_000.0, method="GET", path="/openapi.json",
+        status_code=200, headers={}, think_time_ms=None,
+    )
+    repository.insert_payload_served(
+        session_id="sess-episodes", token="tok-new", template_id="openapi_fingerprint_reasoning",
+        intent="fingerprint", vector="openapi_field", path="/openapi.json",
+        ts=10_000.0, marker="X-Agent-Model", style="reasoning_mimicry",
+    )
+    repository.insert_event(
+        session_id="sess-episodes", ts=10_001.0, method="GET", path="/api/v1/users/1",
+        status_code=200, headers={"x-agent-model": "new-episode-model"}, think_time_ms=None,
+    )
+
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    rows = response.text.split("<tr")
+    row = next(r for r in rows if "sess-episodes" in r)
+
+    assert "new-episode-model" in row
+    assert "old-episode-model" not in row
+    assert "reasoning_mimicry: 1" in row
+    assert "operational" not in row
+
+
+def test_dashboard_does_not_inherit_canary_confirmed_from_an_old_episode(console_client):
+    # Reproduces session_transcripts/10.md: a session_id that collided with
+    # an unrelated earlier visit (shared fallback identity) which genuinely
+    # hit the canary must NOT show AI_AGENT/canary-confirmed for its current
+    # episode just because that earlier, unrelated visit earned it.
+    from app.storage import repository
+
+    repository.upsert_session("sess-inherited", "iphash", "ua", 1000.0)
+
+    # Old episode: a real, verified canary hit.
+    repository.insert_event(
+        session_id="sess-inherited", ts=1000.0, method="GET",
+        path="/api/internal/callback/tok-old", status_code=204,
+        headers={}, think_time_ms=None,
+    )
+    repository.insert_payload_served(
+        session_id="sess-inherited", token="tok-old", template_id="sql_canary_operational",
+        intent="canary_callback", vector="html_comment", path="/backup.sql",
+        ts=999.0, style="operational",
+    )
+    repository.insert_canary_hit(
+        session_id="sess-inherited", token="tok-old",
+        path="/api/internal/callback/tok-old", ts=1000.0, verified=True,
+    )
+    repository.mark_canary_confirmed("sess-inherited")
+
+    # Big gap, then a fresh episode with ordinary requests -- no canary hit
+    # at all this time.
+    repository.insert_event(
+        session_id="sess-inherited", ts=10_000.0, method="GET", path="/api/v1/users/1",
+        status_code=200, headers={}, think_time_ms=None,
+    )
+    repository.insert_event(
+        session_id="sess-inherited", ts=10_005.0, method="GET", path="/api/v1/orders/1",
+        status_code=200, headers={}, think_time_ms=None,
+    )
+
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    rows = response.text.split("<tr")
+    row = next(r for r in rows if "sess-inherited" in r)
+
+    assert "AI_AGENT" not in row
+    # "Canary hit" column renders yes/no with true/false CSS classes.
+    assert '"false">no</td>' in row
+
+
+def test_dashboard_shows_canary_confirmed_when_hit_is_within_current_episode(console_client):
+    from app.storage import repository
+
+    repository.upsert_session("sess-current-hit", "iphash", "ua", 1000.0)
+    repository.insert_event(
+        session_id="sess-current-hit", ts=1000.0, method="GET",
+        path="/api/internal/callback/tok-now", status_code=204,
+        headers={}, think_time_ms=None,
+    )
+    repository.insert_payload_served(
+        session_id="sess-current-hit", token="tok-now", template_id="sql_canary_operational",
+        intent="canary_callback", vector="html_comment", path="/backup.sql",
+        ts=999.0, style="operational",
+    )
+    repository.insert_canary_hit(
+        session_id="sess-current-hit", token="tok-now",
+        path="/api/internal/callback/tok-now", ts=1000.0, verified=True,
+    )
+    repository.mark_canary_confirmed("sess-current-hit")
+
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    rows = response.text.split("<tr")
+    row = next(r for r in rows if "sess-current-hit" in r)
+
+    assert "AI_AGENT" in row
+    assert '"true">yes</td>' in row
+
+
+def test_dashboard_reasoning_stage_reflects_elapsed_time_not_payload_count(console_client):
+    import time
+
+    from app.storage import repository
+
+    now = time.time()
+    repository.upsert_session("sess-stage", "iphash", "ua", now)
+    # Three deliveries with no elapsed time between them -- the raw lifetime
+    # count is 3, but with the default 60s dwell the real stage is still 0.
+    # The dashboard must show the latter, not the former (that drift was the
+    # actual bug: it used to just echo the raw payload count).
+    for i in range(3):
+        repository.insert_payload_served(
+            session_id="sess-stage",
+            token=f"tok{i}",
+            template_id="t1",
+            intent="canary_callback",
+            vector="html_comment",
+            path="/login",
+            ts=now,
+            style="reasoning_mimicry",
+        )
+
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    rows = response.text.split("<tr")
+    row = next(r for r in rows if "sess-stage" in r)
+    assert "<td>0</td>" in row
+    assert "reasoning_mimicry: 3" in row
+
+
+def test_dashboard_curated_wordlist_signal_uses_lifetime_count_not_episode_count(console_client):
+    # Regression test: curated_wordlist_recall_signal's <=30 total-event-count
+    # gate must be evaluated against the session's full lifetime request
+    # count (matching what the live pipeline actually used, per
+    # request_capture.py's unscoped count_events() call), not narrowed to the
+    # current episode -- otherwise a session with well over 30 lifetime
+    # requests but a small, curated-looking recent episode gets flagged
+    # AI_AGENT on the dashboard even though the live scorer never fired this
+    # signal for it.
+    from app.storage import repository
+
+    repository.upsert_session("sess-lifetime", "iphash", "ua", 1000.0)
+
+    # Old episode: 30 filler requests to unrelated, non-sensitive paths.
+    for i in range(30):
+        repository.insert_event(
+            session_id="sess-lifetime", ts=1000.0 + i, method="GET",
+            path=f"/foo/{i}", status_code=200, headers={}, think_time_ms=None,
+        )
+
+    # Big gap, then a fresh, small episode spanning 4 unrelated sensitive-path
+    # categories -- exactly what curated_wordlist_recall_signal looks for,
+    # but only 4 requests into a 34-request-total session.
+    sensitive_paths = ["/.htaccess", "/phpinfo.php", "/web.config", "/.git/config"]
+    for i, path in enumerate(sensitive_paths):
+        repository.insert_event(
+            session_id="sess-lifetime", ts=10_000.0 + i * 5, method="GET",
+            path=path, status_code=200, headers={}, think_time_ms=None,
+        )
+
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    rows = response.text.split("<tr")
+    row = next(r for r in rows if "sess-lifetime" in r)
+    assert "AI_AGENT" not in row
+
+
+def test_dashboard_bot_score_reflects_fallback_identity_like_live_scoring(console_client):
+    # Regression test: the console's recomputed bot_score must include the
+    # cookie_retention_signal contribution for a request that actually used
+    # the IP/UA fallback (no session cookie), matching what live scoring
+    # produced -- previously this was hardcoded to used_fallback_identity=False
+    # in the console's SignalContext reconstruction, silently dropping this
+    # contribution on every dashboard render.
+    from app.storage import repository
+
+    repository.upsert_session("sess-fallback", "iphash", "ua", 1000.0)
+    repository.insert_event(
+        session_id="sess-fallback", ts=1000.0, method="GET", path="/x",
+        status_code=200, headers={}, think_time_ms=None,
+        used_fallback_identity=True,
+    )
+
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    rows = response.text.split("<tr")
+    row = next(r for r in rows if "sess-fallback" in r)
+    # missing-user-agent (1.0) + missing-browser-headers (1.5) +
+    # no-cookie-retention (1.0) = 3.5 -> NON_AI_BOT (bot_score >= 3.0).
+    # Without the fallback-identity contribution this stays at 2.5 -> HUMAN.
+    assert "NON_AI_BOT" in row

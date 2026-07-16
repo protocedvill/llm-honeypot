@@ -64,6 +64,62 @@ def test_user_idor_endpoint_embeds_bait_field(client):
     assert body["_links"]["related"]
 
 
+def test_user_export_endpoint_embeds_bait_field(client):
+    response = client.get("/api/v1/users/1/export")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["_links"]["related"]
+
+
+def test_user_endpoint_carries_cache_hint_header_with_bait_content(client):
+    response = client.get("/api/v1/users/1")
+    assert response.status_code == 200
+    assert response.headers["x-cache-hint"]
+
+
+def test_order_invoice_endpoint_embeds_bait_field(client):
+    response = client.get("/api/v1/orders/1/invoice")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["_links"]["related"]
+
+
+def test_user_sessions_endpoint_embeds_bait_field(client):
+    response = client.get("/api/v1/users/1/sessions")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["_links"]["related"]
+
+
+def test_health_endpoint_embeds_bait_field(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["_meta"]
+
+
+def test_webhooks_list_endpoint_embeds_bait_field(client):
+    response = client.get("/api/v1/webhooks")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["_meta"]
+
+
+def test_webhooks_register_accepts_any_body_shape(client):
+    response = client.post("/api/v1/webhooks", json={"whatever": "shape", "nested": {"a": 1}})
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "registered"
+    assert body["_meta"]
+
+    # Doesn't 422 on a body that isn't even valid JSON, either.
+    response = client.post(
+        "/api/v1/webhooks", content=b"not json", headers={"content-type": "application/json"}
+    )
+    assert response.status_code == 201
+
+
 def test_fake_openapi_spec_served(client):
     response = client.get("/openapi.json")
     assert response.status_code == 200
@@ -276,6 +332,7 @@ def test_beacon_hit_without_fetch_signature_headers_is_not_credited(client):
 
     session_row = repository.get_session(session_id)
     assert session_row["js_beacon_fired"] == 0
+    assert repository.has_verified_beacon_hit(session_id) is False
 
 
 def test_beacon_hit_with_fetch_signature_headers_is_credited(client):
@@ -298,6 +355,7 @@ def test_beacon_hit_with_fetch_signature_headers_is_credited(client):
 
     session_row = repository.get_session(session_id)
     assert session_row["js_beacon_fired"] == 1
+    assert repository.has_verified_beacon_hit(session_id) is True
 
 
 def test_forged_canary_token_is_not_recorded_as_verified(client):
@@ -511,6 +569,25 @@ def test_marker_reference_detected_after_openapi_fingerprint_served(client):
     session_row = repository.get_session(session_id)
     assert session_row["ai_score"] >= 3.0
     assert session_row["classification"] == "AI_AGENT"
+
+
+def test_runtime_marker_offered_to_some_sessions(client):
+    # Template selection for the HTTP_HEADER vector is a per-session random
+    # choice between the existing X-Agent-Model ask and the new
+    # X-Agent-Runtime ask (registry.select_and_render's styled_candidates),
+    # so check a handful of distinct sessions rather than asserting on one.
+    seen_markers: set[str] = set()
+    for i in range(12):
+        session_id = f"runtime-marker-probe-{i}"
+        client.cookies.set("hp_sid", session_id)
+        client.get("/api/v1/users/1")
+        seen_markers.update(repository.get_served_markers(session_id))
+
+    assert "X-Agent-Model" in seen_markers or "X-Agent-Runtime" in seen_markers
+    assert "X-Agent-Runtime" in seen_markers, (
+        "expected at least one of 12 distinct sessions to land on the new "
+        "runtime-fingerprint template"
+    )
 
 
 def test_curated_wordlist_recall_flips_classification_without_canary_compliance(client):
