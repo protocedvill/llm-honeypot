@@ -104,6 +104,50 @@ def test_timing_rejects_non_positive_values(console_client):
     assert response.status_code == 400
 
 
+def test_waf_toggle_defaults_shown_and_updatable(console_client):
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    assert 'name="waf_enabled"' in response.text
+
+    post_response = console_client.post(
+        "/waf", data={"waf_enabled": "off"}, headers=_auth_header(), follow_redirects=False
+    )
+    assert post_response.status_code == 303
+
+    from app.storage import repository
+
+    assert repository.get_config("waf_enabled") == "off"
+
+
+def test_waf_toggle_rejects_unknown_value(console_client):
+    response = console_client.post(
+        "/waf", data={"waf_enabled": "bogus"}, headers=_auth_header()
+    )
+    assert response.status_code == 400
+
+
+def test_dashboard_shows_waf_block_count(console_client):
+    from app.storage import repository
+
+    repository.upsert_session("sess-waf", "iphash", "ua", 1000.0)
+    repository.insert_event(
+        session_id="sess-waf",
+        ts=1000.0,
+        method="GET",
+        path="/login",
+        status_code=403,
+        headers={},
+        think_time_ms=None,
+        waf_triggered=True,
+    )
+
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    rows = response.text.split("<tr")
+    row = next(r for r in rows if "sess-waf" in r)
+    assert "<td>1</td>" in row
+
+
 def test_active_row_highlighted_for_recent_session(console_client):
     import time
 
@@ -448,3 +492,72 @@ def test_dashboard_bot_score_reflects_fallback_identity_like_live_scoring(consol
     # no-cookie-retention (1.0) = 3.5 -> NON_AI_BOT (bot_score >= 3.0).
     # Without the fallback-identity contribution this stays at 2.5 -> HUMAN.
     assert "NON_AI_BOT" in row
+
+
+def _seed_sessions(repository, count, base_ts=1000.0):
+    # Distinct, increasing last_seen so ORDER BY last_seen DESC is
+    # unambiguous -- session N-1 (0-indexed, highest ts) is the most recent.
+    for i in range(count):
+        repository.upsert_session(f"page-sess-{i:03d}", "iphash", "ua", base_ts + i)
+
+
+def test_dashboard_pagination_shows_only_page_size_sessions(console_client):
+    from app.storage import repository
+
+    _seed_sessions(repository, 30)  # default console_page_size is 25
+
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    rows = [r for r in response.text.split("<tr") if "page-sess-" in r]
+    assert len(rows) == 25
+    # Most recently active (highest ts -> highest index) sessions first --
+    # the 25 most recent of 30 are indices 5..29, so index 4 is the first
+    # one pushed to page 2.
+    assert "page-sess-029" in response.text
+    assert "page-sess-004" not in response.text
+    assert "page 1 of 2" in response.text
+
+
+def test_dashboard_pagination_second_page_shows_remaining_sessions(console_client):
+    from app.storage import repository
+
+    _seed_sessions(repository, 30)
+
+    response = console_client.get("/", headers=_auth_header(), params={"page": 2})
+    assert response.status_code == 200
+    rows = [r for r in response.text.split("<tr") if "page-sess-" in r]
+    assert len(rows) == 5
+    assert "page-sess-000" in response.text
+    assert "page-sess-029" not in response.text
+    assert "page 2 of 2" in response.text
+
+
+def test_dashboard_pagination_clamps_out_of_range_page(console_client):
+    from app.storage import repository
+
+    _seed_sessions(repository, 30)
+
+    response = console_client.get("/", headers=_auth_header(), params={"page": 9999})
+    assert response.status_code == 200
+    rows = [r for r in response.text.split("<tr") if "page-sess-" in r]
+    # Clamped to the last real page (2), not an empty page.
+    assert len(rows) == 5
+    assert "page 2 of 2" in response.text
+
+
+def test_dashboard_pagination_clamps_non_positive_page_to_first(console_client):
+    from app.storage import repository
+
+    _seed_sessions(repository, 30)
+
+    response = console_client.get("/", headers=_auth_header(), params={"page": 0})
+    assert response.status_code == 200
+    rows = [r for r in response.text.split("<tr") if "page-sess-" in r]
+    assert len(rows) == 25
+    assert "page 1 of 2" in response.text
+
+
+def test_dashboard_pagination_single_page_when_no_sessions(console_client):
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    assert "page 1 of 1" in response.text

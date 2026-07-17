@@ -45,10 +45,32 @@
       <input type="number" name="reset_seconds" id="reset_seconds" min="1" value="{{ reset_seconds }}">
       <button type="submit">Apply</button>
     </form>
+
+    <form method="post" action="/waf" style="display:flex; gap:.5rem; align-items:center;">
+      <label for="waf_enabled"><strong>Simulated WAF</strong></label>
+      <select name="waf_enabled" id="waf_enabled">
+        <option value="on" {% if waf_enabled %}selected{% endif %}>on</option>
+        <option value="off" {% if not waf_enabled %}selected{% endif %}>off</option>
+      </select>
+      <button type="submit">Apply</button>
+    </form>
   </div>
 
   <div class="panel">
-    <h2 style="font-size:1rem;">Sessions ({{ sessions|length }})</h2>
+    <h2 style="font-size:1rem;">Sessions ({{ sessions|length }} of {{ total_sessions }}, page {{ page }} of {{ total_pages }})</h2>
+    <div style="display:flex; gap:.75rem; align-items:center; margin-bottom:.75rem;">
+      {% if page > 1 %}
+      <a href="/?page={{ page - 1 }}">&larr; Prev</a>
+      {% else %}
+      <span style="opacity:.4;">&larr; Prev</span>
+      {% endif %}
+      <span>Page {{ page }} / {{ total_pages }}</span>
+      {% if page < total_pages %}
+      <a href="/?page={{ page + 1 }}">Next &rarr;</a>
+      {% else %}
+      <span style="opacity:.4;">Next &rarr;</span>
+      {% endif %}
+    </div>
     <table>
       <thead>
         <tr>
@@ -60,6 +82,8 @@
           <th>Human</th>
           <th>JS beacon</th>
           <th>Canary hit</th>
+          <th>WAF blocks</th>
+          <th>Vuln probes</th>
           <th>Reasoning stage</th>
           <th>Payloads served</th>
           <th>Fingerprint data harvested</th>
@@ -78,6 +102,8 @@
           <td>{{ s.human_score }}</td>
           <td class="{{ 'true' if s.js_beacon_fired else 'false' }}">{{ 'yes' if s.js_beacon_fired else 'no' }}</td>
           <td class="{{ 'true' if s.canary_confirmed else 'false' }}">{{ 'yes' if s.canary_confirmed else 'no' }}</td>
+          <td>{{ s.waf_block_count }}</td>
+          <td>{{ s.vuln_probe_count }}</td>
           <td>{{ s.escalation_count }}</td>
           <td>
             {% for style_name, count in s.style_counts.items() %}
@@ -93,7 +119,7 @@
           <td>{{ s.last_seen }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="13">No sessions recorded yet.</td></tr>
+        <tr><td colspan="15">No sessions recorded yet.</td></tr>
         {% endfor %}
       </tbody>
     </table>

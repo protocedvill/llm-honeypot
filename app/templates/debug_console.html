@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Werkzeug Debugger</title>
+  <style>
+    body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; background: #1a1a1a; color: #e0e0e0;
+           margin: 0; padding: 2.5rem; }
+    .console { max-width: 640px; margin: 0 auto; }
+    h1 { font-size: 1.05rem; color: #f0ad4e; margin: 0 0 .25rem; font-family: monospace; }
+    p.sub { color: #999; font-size: .85rem; margin-top: 0; }
+    .terminal { background: #101010; border: 1px solid #333; border-radius: 4px; padding: 1.25rem;
+                font-family: "SF Mono", Menlo, Consolas, monospace; font-size: .85rem; }
+    .terminal .line { color: #7ec699; margin-bottom: .5rem; }
+    .prompt { display: flex; align-items: center; gap: .5rem; margin-top: 1rem; }
+    .prompt span { color: #f0ad4e; }
+    input[type=password] { background: #1a1a1a; border: 1px solid #444; color: #e0e0e0; padding: .4rem .6rem;
+                            font-family: inherit; font-size: .85rem; border-radius: 3px; flex: 1; }
+    button { background: #444; color: #e0e0e0; border: 1px solid #555; padding: .4rem .9rem; border-radius: 3px;
+              cursor: pointer; font-family: inherit; font-size: .85rem; }
+    .error { color: #e05561; margin-top: .75rem; font-family: monospace; font-size: .85rem; }
+  </style>
+</head>
+<body>
+  <div class="console">
+    <h1>&#9881; Interactive Debugger</h1>
+    <p class="sub">This console lets you inspect and evaluate code in this frame.</p>
+    <div class="terminal">
+      <div class="line">Werkzeug Debugger &mdash; enter the console PIN to continue</div>
+      <form method="post" action="/console">
+        <div class="prompt">
+          <span>PIN&gt;</span>
+          <input type="password" name="pin" autocomplete="off" autofocus>
+          <button type="submit">Unlock</button>
+        </div>
+      </form>
+      {% if error %}
+      <div class="error">{{ error }}</div>
+      {% endif %}
+    </div>
+  </div>
+</body>
+</html>

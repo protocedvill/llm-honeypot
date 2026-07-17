@@ -85,13 +85,15 @@ def insert_event(
     headers: dict[str, Any],
     think_time_ms: float | None,
     used_fallback_identity: bool = False,
+    waf_triggered: bool = False,
+    vuln_probe_detected: bool = False,
 ) -> None:
     conn = get_connection()
     with write_lock():
         conn.execute(
             """
-            INSERT INTO events (session_id, ts, method, path, status_code, headers_json, think_time_ms, used_fallback_identity)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO events (session_id, ts, method, path, status_code, headers_json, think_time_ms, used_fallback_identity, waf_triggered, vuln_probe_detected)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -102,6 +104,8 @@ def insert_event(
                 json.dumps(headers),
                 think_time_ms,
                 int(used_fallback_identity),
+                int(waf_triggered),
+                int(vuln_probe_detected),
             ),
         )
         conn.commit()
@@ -125,6 +129,48 @@ def count_events(session_id: str, since: float | None = None) -> int:
             (session_id, since),
         )
     return cur.fetchone()["c"]
+
+
+def count_events_bulk(session_ids: list[str]) -> dict[str, int]:
+    """Bulk version of count_events(session_id) (no since -- see that
+    function's docstring on why total_event_count is deliberately
+    lifetime-wide, not episode-scoped) for a page's worth of session_ids: one
+    GROUP BY query instead of one COUNT query per session_id."""
+    if not session_ids:
+        return {}
+    conn = get_connection()
+    placeholders = ",".join("?" for _ in session_ids)
+    cur = conn.execute(
+        f"SELECT session_id, COUNT(*) AS c FROM events WHERE session_id IN ({placeholders}) GROUP BY session_id",
+        session_ids,
+    )
+    counts = {row["session_id"]: row["c"] for row in cur.fetchall()}
+    return {sid: counts.get(sid, 0) for sid in session_ids}
+
+
+def get_events_bulk(session_ids: list[str]) -> dict[str, list[sqlite3.Row]]:
+    """Bulk fetch of each session's events, most-recent-first, bounded per
+    session at `_EPISODE_WALK_LIMIT` (same bound and tradeoff as
+    get_session_episode_start -- see its docstring). One IN (...) query for
+    a whole page instead of one per session_id; the result serves both the
+    episode-boundary walk (episode_start_from_timestamps) and the
+    since-filtered "recent events" window the console needs, so both can
+    share one fetch instead of issuing two overlapping bulk queries over
+    the same table."""
+    if not session_ids:
+        return {}
+    conn = get_connection()
+    placeholders = ",".join("?" for _ in session_ids)
+    cur = conn.execute(
+        f"SELECT * FROM events WHERE session_id IN ({placeholders}) ORDER BY session_id, ts DESC",
+        session_ids,
+    )
+    by_session: dict[str, list[sqlite3.Row]] = {sid: [] for sid in session_ids}
+    for row in cur:
+        bucket = by_session[row["session_id"]]
+        if len(bucket) < _EPISODE_WALK_LIMIT:
+            bucket.append(row)
+    return by_session
 
 
 def get_recent_events(
@@ -206,6 +252,21 @@ def was_token_served_to_session(session_id: str, token: str) -> bool:
     return cur.fetchone() is not None
 
 
+def served_markers_from_rows(rows: list[sqlite3.Row], since: float | None) -> list[str]:
+    """Distinct marker names, in first-seen order, from already-fetched
+    (marker, ts) rows (e.g. via get_served_markers_bulk), with the `since`
+    cutoff applied. Shared by get_served_markers' single-session query path
+    and bulk callers -- applying `since` here even when the caller's SQL
+    already filtered by it is a harmless no-op, so both paths can run the
+    exact same filtering logic."""
+    seen: dict[str, None] = {}
+    for row in rows:
+        if since is not None and row["ts"] < since:
+            continue
+        seen.setdefault(row["marker"], None)
+    return list(seen)
+
+
 def get_served_markers(session_id: str, since: float | None = None) -> list[str]:
     """Distinct markers (e.g. a header name a payload asked the reader to
     echo) served to this session -- used to detect an agent testing a
@@ -216,15 +277,79 @@ def get_served_markers(session_id: str, since: float | None = None) -> list[str]
     conn = get_connection()
     if since is None:
         cur = conn.execute(
-            "SELECT DISTINCT marker FROM payloads_served WHERE session_id = ? AND marker IS NOT NULL",
+            "SELECT marker, ts FROM payloads_served WHERE session_id = ? AND marker IS NOT NULL",
             (session_id,),
         )
     else:
         cur = conn.execute(
-            "SELECT DISTINCT marker FROM payloads_served WHERE session_id = ? AND marker IS NOT NULL AND ts >= ?",
+            "SELECT marker, ts FROM payloads_served WHERE session_id = ? AND marker IS NOT NULL AND ts >= ?",
             (session_id, since),
         )
-    return [row["marker"] for row in cur.fetchall()]
+    return served_markers_from_rows(cur.fetchall(), since=since)
+
+
+def get_served_markers_bulk(session_ids: list[str]) -> dict[str, list[sqlite3.Row]]:
+    """Bulk fetch of (marker, ts) rows (marker IS NOT NULL) for these
+    sessions, unfiltered by since (varies per session -- caller applies its
+    own cutoff via served_markers_from_rows). One IN (...) query for a
+    whole page instead of one per session_id."""
+    if not session_ids:
+        return {}
+    conn = get_connection()
+    placeholders = ",".join("?" for _ in session_ids)
+    cur = conn.execute(
+        f"""
+        SELECT session_id, marker, ts FROM payloads_served
+        WHERE session_id IN ({placeholders}) AND marker IS NOT NULL
+        """,
+        session_ids,
+    )
+    by_session: dict[str, list[sqlite3.Row]] = {sid: [] for sid in session_ids}
+    for row in cur:
+        by_session[row["session_id"]].append(row)
+    return by_session
+
+
+def marker_values_from_rows(
+    rows: list[sqlite3.Row],
+    markers: list[str],
+    since: float | None,
+    limit_per_marker: int,
+) -> dict[str, list[str]]:
+    """Core scan-and-cap logic behind get_marker_values, factored out so
+    bulk callers can run it against a page-wide pre-fetch (see
+    get_marker_value_events_bulk) instead of a second, per-session query.
+    `rows` must be ascending by ts and expose `ts`/`headers_json`. Applying
+    `since` here even when the caller's SQL already filtered by it is a
+    harmless no-op, so both the single-session and bulk paths can share one
+    implementation.
+
+    Scans oldest-first and stops as soon as every marker has hit its cap --
+    so a session with far more than `limit_per_marker` distinct-header-
+    bearing requests still gets the *earliest* observed values ("order
+    first observed") instead of silently losing them past some fixed
+    window."""
+    if not markers:
+        return {}
+    lowered_to_canonical = {m.lower(): m for m in markers}
+    found: dict[str, list[str]] = {name: [] for name in markers}
+    remaining = set(found)
+    for row in rows:
+        if since is not None and row["ts"] < since:
+            continue
+        headers = json.loads(row["headers_json"])
+        for key, value in headers.items():
+            canonical = lowered_to_canonical.get(key.lower())
+            if not canonical or not value:
+                continue
+            values = found[canonical]
+            if value not in values and len(values) < limit_per_marker:
+                values.append(value)
+                if len(values) >= limit_per_marker:
+                    remaining.discard(canonical)
+        if not remaining:
+            break
+    return {name: values for name, values in found.items() if values}
 
 
 def get_marker_values(
@@ -247,47 +372,46 @@ def get_marker_values(
     `markers`, when given, is used instead of calling get_served_markers
     again -- callers that already fetched the served-marker list for this
     session/since pair (e.g. the console) can pass it through to avoid a
-    duplicate query.
-
-    Scans events oldest-first from `since` (or session start) rather than
-    going through get_recent_events' most-recent-window, and stops as soon
-    as every marker has hit its cap -- so a session with far more than
-    `limit_per_marker` distinct-header-bearing requests still gets the
-    *earliest* observed values ("order first observed", per above) instead
-    of silently losing them to a fixed recent-events window."""
+    duplicate query."""
     if markers is None:
         markers = get_served_markers(session_id, since=since)
     if not markers:
         return {}
-    lowered_to_canonical = {m.lower(): m for m in markers}
-    found: dict[str, list[str]] = {name: [] for name in markers}
-    remaining = set(found)
-
     conn = get_connection()
     if since is None:
         cur = conn.execute(
-            "SELECT headers_json FROM events WHERE session_id = ? ORDER BY ts ASC",
+            "SELECT ts, headers_json FROM events WHERE session_id = ? ORDER BY ts ASC",
             (session_id,),
         )
     else:
         cur = conn.execute(
-            "SELECT headers_json FROM events WHERE session_id = ? AND ts >= ? ORDER BY ts ASC",
+            "SELECT ts, headers_json FROM events WHERE session_id = ? AND ts >= ? ORDER BY ts ASC",
             (session_id, since),
         )
+    return marker_values_from_rows(cur.fetchall(), markers, since, limit_per_marker)
+
+
+def get_marker_value_events_bulk(session_ids: list[str]) -> dict[str, list[sqlite3.Row]]:
+    """Bulk fetch of (ts, headers_json) rows per session, ascending order,
+    unfiltered by since -- source rows for marker_values_from_rows, fetched
+    once per page instead of once per session_id. Kept separate from
+    get_events_bulk (which also has ts): this needs headers_json, a wider
+    column get_events_bulk's episode/recent-events consumers don't need."""
+    if not session_ids:
+        return {}
+    conn = get_connection()
+    placeholders = ",".join("?" for _ in session_ids)
+    cur = conn.execute(
+        f"""
+        SELECT session_id, ts, headers_json FROM events
+        WHERE session_id IN ({placeholders}) ORDER BY session_id, ts ASC
+        """,
+        session_ids,
+    )
+    by_session: dict[str, list[sqlite3.Row]] = {sid: [] for sid in session_ids}
     for row in cur:
-        headers = json.loads(row["headers_json"])
-        for key, value in headers.items():
-            canonical = lowered_to_canonical.get(key.lower())
-            if not canonical or not value:
-                continue
-            values = found[canonical]
-            if value not in values and len(values) < limit_per_marker:
-                values.append(value)
-                if len(values) >= limit_per_marker:
-                    remaining.discard(canonical)
-        if not remaining:
-            break
-    return {name: values for name, values in found.items() if values}
+        by_session[row["session_id"]].append(row)
+    return by_session
 
 
 def _walk_episode_start(
@@ -335,6 +459,48 @@ def get_reasoning_episode_start(
     return _walk_episode_start(timestamps, reset_gap_seconds, now)
 
 
+def get_reasoning_episode_starts_bulk(
+    session_ids: list[str], reset_gap_seconds: float, now: float
+) -> dict[str, float | None]:
+    """Bulk version of get_reasoning_episode_start for a page's worth of
+    session_ids: one IN (...) query instead of one per session_id, then the
+    existing _walk_episode_start walk runs per session in pure Python. No
+    `_EPISODE_WALK_LIMIT`-style cap here, matching
+    get_reasoning_episode_start's existing unbounded semantics -- batching
+    shouldn't quietly change behavior as a side effect."""
+    if not session_ids:
+        return {}
+    conn = get_connection()
+    placeholders = ",".join("?" for _ in session_ids)
+    cur = conn.execute(
+        f"""
+        SELECT session_id, ts FROM payloads_served
+        WHERE session_id IN ({placeholders}) AND style = 'reasoning_mimicry'
+        ORDER BY session_id, ts DESC
+        """,
+        session_ids,
+    )
+    by_session: dict[str, list[float]] = {sid: [] for sid in session_ids}
+    for row in cur:
+        by_session[row["session_id"]].append(row["ts"])
+    return {
+        sid: _walk_episode_start(timestamps, reset_gap_seconds, now)
+        for sid, timestamps in by_session.items()
+    }
+
+
+def episode_start_from_timestamps(
+    timestamps_desc: list[float], reset_gap_seconds: float
+) -> float | None:
+    """Given a session's activity timestamps already fetched most-recent-
+    first (e.g. via get_events_bulk), returns what get_session_episode_start
+    would -- lets bulk callers reuse one fetch instead of issuing a second,
+    per-session query. Returns None if there's no activity."""
+    if not timestamps_desc:
+        return None
+    return _walk_episode_start(timestamps_desc, reset_gap_seconds, now=timestamps_desc[0])
+
+
 def get_session_episode_start(session_id: str, reset_gap_seconds: float) -> float | None:
     """Start timestamp of this session's most recent contiguous run of
     activity ("episode"), regardless of whether that run is still ongoing --
@@ -369,9 +535,18 @@ def get_session_episode_start(session_id: str, reset_gap_seconds: float) -> floa
         (session_id, _EPISODE_WALK_LIMIT),
     )
     timestamps = [row["ts"] for row in cur.fetchall()]
-    if not timestamps:
-        return None
-    return _walk_episode_start(timestamps, reset_gap_seconds, now=timestamps[0])
+    return episode_start_from_timestamps(timestamps, reset_gap_seconds)
+
+
+def escalation_count_from_episode_start(
+    episode_start: float | None, dwell_seconds: float, now: float
+) -> int:
+    """Shared by get_reasoning_escalation_count's single-session path and
+    bulk callers that already have episode_start from
+    get_reasoning_episode_starts_bulk."""
+    if episode_start is None:
+        episode_start = now
+    return int((now - episode_start) // dwell_seconds)
 
 
 def get_reasoning_escalation_count(
@@ -385,9 +560,7 @@ def get_reasoning_escalation_count(
     if now is None:
         now = time.time()
     episode_start = get_reasoning_episode_start(session_id, reset_gap_seconds, now=now)
-    if episode_start is None:
-        episode_start = now
-    return int((now - episode_start) // dwell_seconds)
+    return escalation_count_from_episode_start(episode_start, dwell_seconds, now)
 
 
 def get_config(key: str) -> str | None:
@@ -410,13 +583,43 @@ def set_config(key: str, value: str) -> None:
         conn.commit()
 
 
-def list_sessions(limit: int = 100) -> list[sqlite3.Row]:
-    """Most-recently-active sessions first, for the console dashboard."""
+def list_sessions(limit: int = 100, offset: int = 0) -> list[sqlite3.Row]:
+    """Most-recently-active sessions first, for the console dashboard.
+    Stale sessions aren't filtered out -- they simply sort to a later
+    page/offset rather than being hidden, so an operator can still page
+    through to find one (e.g. investigating a session that went quiet after
+    a canary hit) without any data being excluded from the query itself."""
     conn = get_connection()
     cur = conn.execute(
-        "SELECT * FROM sessions ORDER BY last_seen DESC LIMIT ?", (limit,)
+        "SELECT * FROM sessions ORDER BY last_seen DESC LIMIT ? OFFSET ?",
+        (limit, offset),
     )
     return cur.fetchall()
+
+
+def count_sessions() -> int:
+    """Total session count, for the console dashboard's page-count display.
+    Cheap regardless of table size -- sqlite answers an unfiltered COUNT(*)
+    from the smallest available index (here, the session_id primary key)
+    without touching the table's wider columns."""
+    conn = get_connection()
+    cur = conn.execute("SELECT COUNT(*) AS c FROM sessions")
+    return cur.fetchone()["c"]
+
+
+def style_counts_from_rows(rows: list[sqlite3.Row], since: float | None) -> dict[str, int]:
+    """style -> count from already-fetched (style, ts) rows (e.g. via
+    get_style_counts_bulk), with the `since` cutoff applied. Shared by
+    get_style_counts' single-session query path and bulk callers."""
+    counts: dict[str, int] = {}
+    for row in rows:
+        if since is not None and row["ts"] < since:
+            continue
+        style = row["style"]
+        if style is None:
+            continue
+        counts[style] = counts.get(style, 0) + 1
+    return counts
 
 
 def get_style_counts(session_id: str, since: float | None = None) -> dict[str, int]:
@@ -428,15 +631,34 @@ def get_style_counts(session_id: str, since: float | None = None) -> dict[str, i
     conn = get_connection()
     if since is None:
         cur = conn.execute(
-            "SELECT style, COUNT(*) AS c FROM payloads_served WHERE session_id = ? GROUP BY style",
+            "SELECT style, ts FROM payloads_served WHERE session_id = ?",
             (session_id,),
         )
     else:
         cur = conn.execute(
-            "SELECT style, COUNT(*) AS c FROM payloads_served WHERE session_id = ? AND ts >= ? GROUP BY style",
+            "SELECT style, ts FROM payloads_served WHERE session_id = ? AND ts >= ?",
             (session_id, since),
         )
-    return {row["style"]: row["c"] for row in cur.fetchall() if row["style"] is not None}
+    return style_counts_from_rows(cur.fetchall(), since=since)
+
+
+def get_style_counts_bulk(session_ids: list[str]) -> dict[str, list[sqlite3.Row]]:
+    """Bulk fetch of (style, ts) rows for these sessions, unfiltered by since
+    (varies per session -- caller applies its own cutoff via
+    style_counts_from_rows). One IN (...) query for a whole page instead of
+    one GROUP BY query per session_id."""
+    if not session_ids:
+        return {}
+    conn = get_connection()
+    placeholders = ",".join("?" for _ in session_ids)
+    cur = conn.execute(
+        f"SELECT session_id, style, ts FROM payloads_served WHERE session_id IN ({placeholders})",
+        session_ids,
+    )
+    by_session: dict[str, list[sqlite3.Row]] = {sid: [] for sid in session_ids}
+    for row in cur:
+        by_session[row["session_id"]].append(row)
+    return by_session
 
 
 def insert_canary_hit(

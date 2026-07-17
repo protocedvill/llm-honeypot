@@ -554,17 +554,22 @@ def test_refuses_to_start_with_malformed_canary_base_url(tmp_path, monkeypatch, 
 
 
 def test_marker_reference_detected_after_openapi_fingerprint_served(client):
+    # Force the "operational" style so this test deterministically lands on
+    # openapi_fingerprint_operational regardless of which style a given
+    # session's fallback identity happens to draw from STYLES (now 4-wide
+    # with context_bomb added, which has no marker at all).
+    repository.set_config("style_override", "operational")
     ua = {"User-Agent": "curl/8.4.0"}
     client.get("/openapi.json", headers=ua)
     session_id = client.cookies.get("hp_sid")
     assert session_id is not None
 
     markers = repository.get_served_markers(session_id)
-    assert "X-Agent-Model" in markers
+    assert "X-Client-Runtime" in markers
 
     # The agent tests the marker header without necessarily disclosing
     # anything real -- testing it at all is the comprehension signal.
-    client.get("/api/v1/users/1", headers={**ua, "X-Agent-Model": "gpt-4"})
+    client.get("/api/v1/users/1", headers={**ua, "X-Client-Runtime": "gpt-4"})
 
     session_row = repository.get_session(session_id)
     assert session_row["ai_score"] >= 3.0
@@ -573,8 +578,8 @@ def test_marker_reference_detected_after_openapi_fingerprint_served(client):
 
 def test_runtime_marker_offered_to_some_sessions(client):
     # Template selection for the HTTP_HEADER vector is a per-session random
-    # choice between the existing X-Agent-Model ask and the new
-    # X-Agent-Runtime ask (registry.select_and_render's styled_candidates),
+    # choice between the existing X-Client-Runtime ask and the new
+    # X-Client-Platform ask (registry.select_and_render's styled_candidates),
     # so check a handful of distinct sessions rather than asserting on one.
     seen_markers: set[str] = set()
     for i in range(12):
@@ -583,8 +588,8 @@ def test_runtime_marker_offered_to_some_sessions(client):
         client.get("/api/v1/users/1")
         seen_markers.update(repository.get_served_markers(session_id))
 
-    assert "X-Agent-Model" in seen_markers or "X-Agent-Runtime" in seen_markers
-    assert "X-Agent-Runtime" in seen_markers, (
+    assert "X-Client-Runtime" in seen_markers or "X-Client-Platform" in seen_markers
+    assert "X-Client-Platform" in seen_markers, (
         "expected at least one of 12 distinct sessions to land on the new "
         "runtime-fingerprint template"
     )

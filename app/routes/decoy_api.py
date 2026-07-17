@@ -4,7 +4,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from app.payloads.registry import DeliveryVector
-from app.routes._shared import inject_payload
+from app.routes._shared import header_safe, inject_payload
 
 router = APIRouter()
 
@@ -23,7 +23,7 @@ async def get_user(user_id: str, request: Request):
             "_links": {"related": payload_text},
         }
     )
-    response.headers["X-Cache-Hint"] = header_text
+    response.headers["X-Cache-Hint"] = header_safe(header_text)
     return response
 
 
@@ -41,7 +41,7 @@ async def get_order(order_id: str, request: Request):
             "_links": {"related": payload_text},
         }
     )
-    response.headers["X-Cache-Hint"] = header_text
+    response.headers["X-Cache-Hint"] = header_safe(header_text)
     return response
 
 

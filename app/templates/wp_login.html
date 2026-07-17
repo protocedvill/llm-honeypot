@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <title>Log In &lsaquo; Acme Blog &mdash; WordPress</title>
+  <meta name="generator" content="WordPress 5.2.2">
+  <style>
+    html { background: #f1f1f1; }
+    body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; color: #3c434a; margin: 0; padding: 4rem 0; }
+    #login { width: 320px; margin: 0 auto; }
+    #login h1 { text-align: center; margin-bottom: 1.5rem; }
+    #login h1 a { color: #3858e9; text-decoration: none; font-size: 1.4rem; font-weight: 600; }
+    .login-box { background: #fff; border: 1px solid #dcdcde; box-shadow: 0 1px 3px rgba(0,0,0,.04); padding: 1.5rem 1.5rem 1rem; }
+    .login-box label { display: block; font-size: .8rem; margin-bottom: .3rem; }
+    .login-box input[type=text], .login-box input[type=password] {
+      width: 100%; padding: .5rem; border: 1px solid #8c8f94; border-radius: 3px; box-sizing: border-box;
+      margin-bottom: 1rem; font-size: .95rem;
+    }
+    .submit input { background: #2271b1; border: 1px solid #2271b1; color: #fff; padding: .45rem 1rem;
+                    border-radius: 3px; cursor: pointer; font-size: .9rem; }
+    .message.error { border-left: 4px solid #d63638; background: #fff; padding: .6rem .9rem; margin-bottom: 1rem;
+                     font-size: .85rem; box-shadow: 0 1px 1px rgba(0,0,0,.04); }
+    #nav, #backtoblog { text-align: center; font-size: .8rem; margin-top: 1rem; }
+    #nav a, #backtoblog a { color: #3858e9; text-decoration: none; }
+    #footer { text-align: center; font-size: .75rem; color: #646970; margin-top: 2rem; }
+  </style>
+</head>
+<body class="login">
+  <div id="login">
+    <h1><a href="/blog">Acme Blog</a></h1>
+    {% if error %}
+    <div class="message error">{{ error }}</div>
+    {% endif %}
+    <div class="login-box">
+      <form method="post" action="/wp-login.php">
+        <label for="user_login">Username or Email Address</label>
+        <input type="text" name="log" id="user_login" autocomplete="username">
+        <label for="user_pass">Password</label>
+        <input type="password" name="pwd" id="user_pass" autocomplete="current-password">
+        <p class="submit">
+          <input type="submit" name="wp-submit" value="Log In">
+        </p>
+      </form>
+    </div>
+    <p id="nav"><a href="/wp-login.php?action=lostpassword">Lost your password?</a></p>
+    <p id="backtoblog"><a href="/blog">&larr; Back to Acme Blog</a></p>
+    <p id="footer">Powered by WordPress 5.2.2</p>
+  </div>
+</body>
+</html>

@@ -8,7 +8,22 @@ from app.config import DEFAULT_HMAC_SECRET, get_settings
 from app.logging_conf import configure_logging
 from app.middleware.request_capture import RequestCaptureMiddleware
 from app.middleware.security_headers import BodySizeLimitMiddleware, SecurityHeadersMiddleware
-from app.routes import canary, catchall, decoy_api, decoy_config, decoy_docs, decoy_pages
+from app.middleware.waf import WafMiddleware
+from app.routes import (
+    canary,
+    catchall,
+    decoy_actuator,
+    decoy_api,
+    decoy_blog,
+    decoy_config,
+    decoy_debug_console,
+    decoy_docs,
+    decoy_graphql,
+    decoy_help,
+    decoy_marketing,
+    decoy_pages,
+    decoy_wordpress,
+)
 from app.storage.db import init_db
 
 logger = logging.getLogger(__name__)
@@ -70,7 +85,16 @@ def create_app() -> FastAPI:
     # innermost (wraps the router directly) regardless of this ordering, so
     # it still catches the raised HTTPException before it ever has to cross
     # a BaseHTTPMiddleware task-group boundary.
+    #
+    # WafMiddleware is added next (between BodySizeLimitMiddleware and
+    # RequestCaptureMiddleware) for the same "block responses must still get
+    # logged" reason -- its 403 short-circuit needs to flow back out through
+    # RequestCaptureMiddleware too. It never reads the request body (only
+    # path/query), so unlike a hypothetical body-inspecting middleware it
+    # can't trigger the BaseHTTPMiddleware body-relay/ExceptionGroup hazard
+    # regardless of where it sits relative to BodySizeLimitMiddleware.
     app.add_middleware(BodySizeLimitMiddleware)
+    app.add_middleware(WafMiddleware)
     app.add_middleware(RequestCaptureMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
 
@@ -78,6 +102,13 @@ def create_app() -> FastAPI:
     app.include_router(decoy_api.router)
     app.include_router(decoy_docs.router)
     app.include_router(decoy_config.router)
+    app.include_router(decoy_marketing.router)
+    app.include_router(decoy_blog.router)
+    app.include_router(decoy_help.router)
+    app.include_router(decoy_wordpress.router)
+    app.include_router(decoy_actuator.router)
+    app.include_router(decoy_graphql.router)
+    app.include_router(decoy_debug_console.router)
     app.include_router(canary.router)
     app.include_router(catchall.router)
 

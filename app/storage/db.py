@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     canary_confirmed INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE INDEX IF NOT EXISTS idx_sessions_last_seen ON sessions(last_seen DESC);
+
 CREATE TABLE IF NOT EXISTS events (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id      TEXT NOT NULL REFERENCES sessions(session_id),
@@ -28,10 +30,16 @@ CREATE TABLE IF NOT EXISTS events (
     status_code     INTEGER NOT NULL,
     headers_json    TEXT NOT NULL,
     think_time_ms   REAL,
-    used_fallback_identity INTEGER NOT NULL DEFAULT 0
+    used_fallback_identity INTEGER NOT NULL DEFAULT 0,
+    waf_triggered   INTEGER NOT NULL DEFAULT 0,
+    vuln_probe_detected INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
+-- Superseded by the (session_id, ts) composite below -- a composite index's
+-- leading column serves any query that only filters on session_id, so the
+-- single-column index is dropped rather than kept alongside it.
+DROP INDEX IF EXISTS idx_events_session;
+CREATE INDEX IF NOT EXISTS idx_events_session_ts ON events(session_id, ts);
 
 CREATE TABLE IF NOT EXISTS payloads_served (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,6 +56,7 @@ CREATE TABLE IF NOT EXISTS payloads_served (
 
 CREATE INDEX IF NOT EXISTS idx_payloads_token ON payloads_served(token);
 CREATE INDEX IF NOT EXISTS idx_payloads_session_token ON payloads_served(session_id, token);
+CREATE INDEX IF NOT EXISTS idx_payloads_session_ts ON payloads_served(session_id, ts);
 
 CREATE TABLE IF NOT EXISTS canary_hits (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,6 +67,8 @@ CREATE TABLE IF NOT EXISTS canary_hits (
     verified        INTEGER NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_canary_hits_session_verified_ts ON canary_hits(session_id, verified, ts);
+
 CREATE TABLE IF NOT EXISTS beacon_hits (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id      TEXT NOT NULL REFERENCES sessions(session_id),
@@ -66,6 +77,8 @@ CREATE TABLE IF NOT EXISTS beacon_hits (
     ts              REAL NOT NULL,
     verified        INTEGER NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_beacon_hits_session_verified_ts ON beacon_hits(session_id, verified, ts);
 
 -- Small key/value store for settings the console UI changes at runtime (e.g.
 -- the payload style override) -- separate from Settings/.env, which are
@@ -87,6 +100,8 @@ _COLUMN_MIGRATIONS = [
     ("payloads_served", "marker", "TEXT"),
     ("payloads_served", "style", "TEXT"),
     ("events", "used_fallback_identity", "INTEGER NOT NULL DEFAULT 0"),
+    ("events", "waf_triggered", "INTEGER NOT NULL DEFAULT 0"),
+    ("events", "vuln_probe_detected", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

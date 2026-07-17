@@ -1,3 +1,4 @@
+import base64
 import time
 
 from fastapi.templating import Jinja2Templates
@@ -8,6 +9,22 @@ from app.payloads.registry import DeliveryVector, resolve_session_style, select_
 from app.storage import repository
 
 templates = Jinja2Templates(directory="app/templates")
+
+
+def header_safe(text: str) -> str:
+    """HTTP header values must be Latin-1 (RFC 7230) -- most payload text is
+    plain ASCII/English and passes through untouched, but
+    context_bombs_chinese.py's Chinese-language content isn't, and setting
+    it directly as a header value raises UnicodeEncodeError and crashes the
+    response. Falls back to base64 instead of dropping/refusing the
+    content: theory/context-bombs.txt notes this retains effectiveness --
+    models that encounter it recognize and decode base64 in the large
+    majority of cases."""
+    try:
+        text.encode("latin-1")
+        return text
+    except UnicodeEncodeError:
+        return base64.b64encode(text.encode("utf-8")).decode("ascii")
 
 
 def inject_payload(vector: DeliveryVector, context: str, request: Request, path: str) -> str:
@@ -41,6 +58,7 @@ def inject_payload(vector: DeliveryVector, context: str, request: Request, path:
         settings.hmac_secret,
         escalation_count=escalation_count,
         session_style=session_style,
+        path=path,
     )
     repository.insert_payload_served(
         session_id=session_id,

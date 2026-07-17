@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Changelog &mdash; Acme Corp</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: -apple-system, Arial, sans-serif; background: #f4f5f7; color: #172b4d; margin: 0; }
+    .site-header { display: flex; align-items: center; justify-content: space-between; background: #fff;
+                   padding: 1rem 2rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .site-header .brand { font-weight: 700; color: #0052cc; text-decoration: none; font-size: 1.1rem; }
+    .site-header nav a { margin-left: 1.5rem; color: #5e6c84; text-decoration: none; font-size: .9rem; }
+    .site-header nav a:hover { color: #172b4d; }
+    main { max-width: 760px; margin: 0 auto; padding: 3rem 2rem; }
+    h1 { font-size: 1.6rem; }
+    .entry { background: #fff; border-radius: 8px; padding: 1.25rem 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.08);
+             margin-bottom: 1rem; }
+    .entry .date { font-size: .75rem; color: #97a0af; }
+    .entry h2 { margin: .1rem 0 .6rem; font-size: 1rem; }
+    .entry ul { margin: 0; padding-left: 1.1rem; font-size: .85rem; color: #42526e; }
+    .entry li { margin-bottom: .3rem; }
+    .tag { display: inline-block; font-size: .7rem; font-weight: 700; text-transform: uppercase;
+           padding: .1rem .4rem; border-radius: 3px; margin-right: .4rem; }
+    .tag.added { background: #e3fcef; color: #006644; }
+    .tag.fixed { background: #ffebe6; color: #bf2600; }
+    .tag.changed { background: #deebff; color: #0052cc; }
+    .site-footer { text-align: center; padding: 2rem; color: #97a0af; font-size: .8rem; }
+    .site-footer a { color: #97a0af; margin: 0 .6rem; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/about">Acme</a>
+    <nav>
+      <a href="/features">Features</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/customers">Customers</a>
+      <a href="/blog">Blog</a>
+      <a href="/help">Help</a>
+      <a href="/login">Sign In</a>
+    </nav>
+  </header>
+  <main>
+    <h1>Changelog</h1>
+
+    <div class="entry">
+      <div class="date">June 3, 2026</div>
+      <h2>Webhook retry policies</h2>
+      <ul>
+        <li><span class="tag added">Added</span>Configurable webhook retry policies (fixed interval, exponential backoff).</li>
+        <li><span class="tag changed">Changed</span>Default webhook timeout increased from 5s to 10s.</li>
+      </ul>
+    </div>
+    <div class="entry">
+      <div class="date">May 14, 2026</div>
+      <h2>Multi-currency improvements</h2>
+      <ul>
+        <li><span class="tag added">Added</span>Support for 12 additional currencies including THB, PLN, and ILS.</li>
+        <li><span class="tag fixed">Fixed</span>Rounding error affecting invoices with 3-decimal currencies (e.g. KWD).</li>
+      </ul>
+    </div>
+    <div class="entry">
+      <div class="date">Apr 22, 2026</div>
+      <h2>Audit log export</h2>
+      <ul>
+        <li><span class="tag added">Added</span>CSV export for audit logs, filterable by date range and actor.</li>
+      </ul>
+    </div>
+    <div class="entry">
+      <div class="date">Apr 2, 2026</div>
+      <h2>Dashboard performance</h2>
+      <ul>
+        <li><span class="tag changed">Changed</span>Invoice list view now paginates server-side; large workspaces load ~4x faster.</li>
+        <li><span class="tag fixed">Fixed</span>Date filter on the invoices page ignoring workspace timezone.</li>
+      </ul>
+    </div>
+    <div class="entry">
+      <div class="date">Mar 11, 2026</div>
+      <h2>Role-based access control</h2>
+      <ul>
+        <li><span class="tag added">Added</span>Custom roles with per-resource permissions (previously fixed Admin/Member/Viewer roles only).</li>
+      </ul>
+    </div>
+    <div class="entry">
+      <div class="date">Feb 20, 2026</div>
+      <h2>API rate limit changes</h2>
+      <ul>
+        <li><span class="tag changed">Changed</span>Default API rate limit raised from 60 to 120 requests/min on Growth and above.</li>
+        <li><span class="tag fixed">Fixed</span><code>Retry-After</code> header sometimes missing on 429 responses.</li>
+      </ul>
+    </div>
+    <div class="entry">
+      <div class="date">Jan 30, 2026</div>
+      <h2>Usage-based billing rules</h2>
+      <ul>
+        <li><span class="tag added">Added</span>Tiered and graduated pricing models for metered usage.</li>
+      </ul>
+    </div>
+    <div class="entry">
+      <div class="date">Jan 8, 2026</div>
+      <h2>Bug fixes</h2>
+      <ul>
+        <li><span class="tag fixed">Fixed</span>Duplicate invoice emails sent when a payment retry succeeded on the same day as the original attempt.</li>
+        <li><span class="tag fixed">Fixed</span>Incorrect proration calculation when downgrading mid-cycle.</li>
+      </ul>
+    </div>
+  </main>
+  <footer class="site-footer">
+    <a href="/about">About</a>
+    <a href="/security">Security</a>
+    <a href="/careers">Careers</a>
+    <a href="/status">Status</a>
+    <a href="/terms">Terms</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/contact">Contact</a>
+    <span>&copy; 2026 Acme Corp</span>
+  </footer>
+</body>
+</html>

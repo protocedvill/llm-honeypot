@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Customers &mdash; Acme Corp</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: -apple-system, Arial, sans-serif; background: #f4f5f7; color: #172b4d; margin: 0; }
+    .site-header { display: flex; align-items: center; justify-content: space-between; background: #fff;
+                   padding: 1rem 2rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .site-header .brand { font-weight: 700; color: #0052cc; text-decoration: none; font-size: 1.1rem; }
+    .site-header nav a { margin-left: 1.5rem; color: #5e6c84; text-decoration: none; font-size: .9rem; }
+    .site-header nav a:hover { color: #172b4d; }
+    main { max-width: 860px; margin: 0 auto; padding: 3rem 2rem; }
+    h1 { font-size: 1.8rem; margin-bottom: .25rem; text-align: center; }
+    p.lead { text-align: center; color: #5e6c84; margin-bottom: 2.5rem; }
+    .quote-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; }
+    .quote-card { background: #fff; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .quote-card p.quote { font-size: .95rem; color: #172b4d; line-height: 1.6; margin: 0 0 1rem; }
+    .quote-card .attribution { font-size: .8rem; color: #5e6c84; }
+    .quote-card .attribution strong { color: #172b4d; }
+    .site-footer { text-align: center; padding: 2rem; color: #97a0af; font-size: .8rem; }
+    .site-footer a { color: #97a0af; margin: 0 .6rem; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/about">Acme</a>
+    <nav>
+      <a href="/features">Features</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/customers">Customers</a>
+      <a href="/blog">Blog</a>
+      <a href="/help">Help</a>
+      <a href="/login">Sign In</a>
+    </nav>
+  </header>
+  <main>
+    <h1>Trusted by finance teams</h1>
+    <p class="lead">A few of the teams running their billing on Acme.</p>
+    <div class="quote-grid">
+      <div class="quote-card">
+        <p class="quote">&ldquo;We moved off a homegrown billing script and
+        onto Acme in about six weeks. Usage-based billing that used to take
+        our engineers a full sprint to change now takes finance an
+        afternoon.&rdquo;</p>
+        <div class="attribution"><strong>Elena Rossi</strong> &mdash; VP Finance, Northwind Data</div>
+      </div>
+      <div class="quote-card">
+        <p class="quote">&ldquo;The webhook reliability alone was worth the
+        switch. We used to lose payment events silently; now every failure
+        retries automatically and pages us if it keeps failing.&rdquo;</p>
+        <div class="attribution"><strong>Sam Okafor</strong> &mdash; Head of Platform, Lumen Robotics</div>
+      </div>
+      <div class="quote-card">
+        <p class="quote">&ldquo;Audit logs turned a two-week SOC 2 evidence
+        gathering exercise into a CSV export.&rdquo;</p>
+        <div class="attribution"><strong>Grace Lindqvist</strong> &mdash; Controller, Fjord Analytics</div>
+      </div>
+      <div class="quote-card">
+        <p class="quote">&ldquo;Multi-currency support meant we could sign
+        our first EU enterprise customer without building anything
+        new.&rdquo;</p>
+        <div class="attribution"><strong>Diego Fuentes</strong> &mdash; CFO, Marlowe Health</div>
+      </div>
+    </div>
+  </main>
+  <footer class="site-footer">
+    <a href="/about">About</a>
+    <a href="/security">Security</a>
+    <a href="/careers">Careers</a>
+    <a href="/status">Status</a>
+    <a href="/terms">Terms</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/contact">Contact</a>
+    <span>&copy; 2026 Acme Corp</span>
+  </footer>
+</body>
+</html>

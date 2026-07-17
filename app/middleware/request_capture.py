@@ -137,6 +137,8 @@ class RequestCaptureMiddleware(BaseHTTPMiddleware):
         is_marker_referenced = any(marker.lower() in headers_lower for marker in served_markers)
 
         total_event_count = repository.count_events(session_id)
+        waf_triggered = bool(getattr(request.state, "waf_triggered", False))
+        vuln_probe_detected = bool(getattr(request.state, "vuln_probe_detected", False))
 
         ctx = SignalContext(
             headers=headers_lower,
@@ -153,6 +155,8 @@ class RequestCaptureMiddleware(BaseHTTPMiddleware):
             is_marker_referenced=is_marker_referenced,
             js_beacon_fired=js_beacon_fired,
             used_fallback_identity=used_fallback,
+            waf_triggered=waf_triggered,
+            vuln_probe_detected=vuln_probe_detected,
         )
         classification = classify(ctx)
         repository.update_session_scores(
@@ -176,6 +180,8 @@ class RequestCaptureMiddleware(BaseHTTPMiddleware):
             headers=_redact_headers(headers_lower),
             think_time_ms=think_time_ms,
             used_fallback_identity=used_fallback,
+            waf_triggered=waf_triggered,
+            vuln_probe_detected=vuln_probe_detected,
         )
 
         # Only reachable when call_next returned normally -- if the route

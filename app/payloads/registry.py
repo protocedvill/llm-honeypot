@@ -36,12 +36,26 @@ class PayloadIntent(str, Enum):
     CANARY_CALLBACK = "canary_callback"  # get the agent to fetch our canary URL
     TASK_DERAIL = "task_derail"  # get the agent to abandon/redirect its task
     TOKEN_WASTE = "token_waste"  # get the agent to do busywork that burns tokens
+    # Categorically different from the four above: trips the READING agent's
+    # own provider-side safety refusal, halting it outright -- not a
+    # compliance/self-ID/derail ask directed at the agent's judgment at all.
+    # See theory/context-bombs.txt and app/payloads/context_bombs_chinese.py.
+    CONTEXT_BOMB = "context_bomb"
 
 
-# The three role-confusion levers a template's `style` field can declare --
+# The role-confusion/delivery levers a template's `style` field can declare --
 # see library.py module docstring. Centralized here so registry/repository/
 # console code shares one definition instead of re-listing the strings.
-STYLES: tuple[str, ...] = ("operational", "reasoning_mimicry", "role_declaration")
+# "context_bomb" is not a role-confusion register like the other three --
+# it's its own delivery mechanism (see PayloadIntent.CONTEXT_BOMB) -- but
+# rides the same per-session style-rotation machinery in resolve_session_style
+# / select_and_render below.
+STYLES: tuple[str, ...] = (
+    "operational",
+    "reasoning_mimicry",
+    "role_declaration",
+    "context_bomb",
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +71,15 @@ class PayloadTemplate:
     # still proves it read and reasoned about this specific response's text,
     # which is a comprehension signal independent of compliance.
     marker: str | None = None
+    # Extra paraphrases of the final ("reveal") stage, used only once a
+    # reasoning_mimicry ladder is being RE-delivered after already reaching
+    # its last stage (see select_and_render). Empty by default -- most
+    # templates never repeat their final stage often enough for this to
+    # matter. Exists because session_transcripts/11.md showed the same
+    # final-stage sentence served byte-identical across four different
+    # endpoints in one session; a real internal monologue wouldn't
+    # re-conclude the identical thought word-for-word every time.
+    final_variants: tuple[str, ...] = ()
     # Which artifact format(s) this variant's prose is written to fit, e.g.
     # "html", "env_file", "git_config", "sql_dump", "json", "robots_txt",
     # "openapi", "stack_trace". Selection filters on this so a SQL-dump route
@@ -133,6 +156,7 @@ def select_and_render(
     hmac_secret: str,
     escalation_count: int = 0,
     session_style: str | None = None,
+    path: str = "",
 ) -> tuple[PayloadTemplate, str, str]:
     """Pick a template for this vector+context, mint a canary token bound to
     the session, and render the chosen variant. Template selection is
@@ -155,6 +179,11 @@ def select_and_render(
     the session-wide escalation ladder one step per delivery. It's ignored
     for every other style, which keeps picking a random variant as before.
 
+    `path`, when given, seeds which of a maxed-out ladder's `final_variants`
+    paraphrases gets served on a repeat delivery (see below) -- so re-hitting
+    the ladder's last stage on a different endpoint reads as a fresh
+    restatement instead of an identical echo.
+
     Returns (template, token, rendered_text).
     """
     candidates = get_templates(vector, context)
@@ -168,8 +197,18 @@ def select_and_render(
     template = selector_rng.choice(styled_candidates)
 
     if template.style == "reasoning_mimicry":
-        idx = min(escalation_count, len(template.variants) - 1)
-        variant = template.variants[idx]
+        last_idx = len(template.variants) - 1
+        if escalation_count > last_idx and template.final_variants:
+            # Ladder already maxed out and being re-delivered (e.g. the
+            # session hits another endpoint after already reaching the
+            # final stage elsewhere) -- vary the reveal text per path
+            # instead of repeating the exact same sentence every time.
+            pool = (template.variants[last_idx], *template.final_variants)
+            variant_rng = random.Random(f"{session_id}:{template.id}:{path}:final")
+            variant = variant_rng.choice(pool)
+        else:
+            idx = min(escalation_count, last_idx)
+            variant = template.variants[idx]
     else:
         variant_rng = random.Random(f"{session_id}:{template.id}:{context}:variant")
         variant = variant_rng.choice(template.variants)

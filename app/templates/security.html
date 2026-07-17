@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Security &mdash; Acme Corp</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: -apple-system, Arial, sans-serif; background: #f4f5f7; color: #172b4d; margin: 0; }
+    .site-header { display: flex; align-items: center; justify-content: space-between; background: #fff;
+                   padding: 1rem 2rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .site-header .brand { font-weight: 700; color: #0052cc; text-decoration: none; font-size: 1.1rem; }
+    .site-header nav a { margin-left: 1.5rem; color: #5e6c84; text-decoration: none; font-size: .9rem; }
+    .site-header nav a:hover { color: #172b4d; }
+    main { max-width: 860px; margin: 0 auto; padding: 3rem 2rem; }
+    h1 { font-size: 1.8rem; margin-bottom: .5rem; }
+    h2 { font-size: 1.2rem; margin-top: 2.5rem; }
+    p { color: #42526e; line-height: 1.6; }
+    .badges { display: flex; gap: 1rem; flex-wrap: wrap; margin: 1.5rem 0; }
+    .badge { background: #fff; border-radius: 8px; padding: .75rem 1.25rem; box-shadow: 0 1px 4px rgba(0,0,0,.08);
+             font-size: .85rem; font-weight: 600; color: #0052cc; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; background: #fff; border-radius: 8px;
+            overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    th, td { text-align: left; padding: .6rem 1rem; font-size: .85rem; border-bottom: 1px solid #f4f5f7; }
+    th { color: #5e6c84; }
+    .site-footer { text-align: center; padding: 2rem; color: #97a0af; font-size: .8rem; }
+    .site-footer a { color: #97a0af; margin: 0 .6rem; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/about">Acme</a>
+    <nav>
+      <a href="/features">Features</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/customers">Customers</a>
+      <a href="/blog">Blog</a>
+      <a href="/help">Help</a>
+      <a href="/login">Sign In</a>
+    </nav>
+  </header>
+  <main>
+    <h1>Security &amp; Compliance</h1>
+    <p>Billing data is some of the most sensitive data a company holds.
+    We build and audit our infrastructure accordingly.</p>
+
+    <div class="badges">
+      <div class="badge">SOC 2 Type II</div>
+      <div class="badge">GDPR Compliant</div>
+      <div class="badge">PCI DSS (via processor)</div>
+      <div class="badge">99.95% Uptime SLA</div>
+    </div>
+
+    <h2>Encryption</h2>
+    <p>All data is encrypted at rest using AES-256 and in transit using
+    TLS 1.2+. Database backups are encrypted with a separate key set,
+    rotated quarterly.</p>
+
+    <h2>Access controls</h2>
+    <p>Production access is limited to a small on-call engineering group,
+    gated by single sign-on and hardware security keys. All production
+    access is logged and reviewed monthly.</p>
+
+    <h2>Sub-processors</h2>
+    <table>
+      <thead><tr><th>Sub-processor</th><th>Purpose</th><th>Location</th></tr></thead>
+      <tbody>
+        <tr><td>Amazon Web Services</td><td>Infrastructure hosting</td><td>US, EU</td></tr>
+        <tr><td>Stripe</td><td>Payment processing</td><td>US</td></tr>
+        <tr><td>Datadog</td><td>Monitoring &amp; observability</td><td>US</td></tr>
+        <tr><td>SendGrid</td><td>Transactional email</td><td>US</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Reporting a vulnerability</h2>
+    <p>If you believe you've found a security issue, please contact us via
+    the <a href="/contact">contact page</a> rather than testing against
+    production systems directly.</p>
+  </main>
+  <footer class="site-footer">
+    <a href="/about">About</a>
+    <a href="/security">Security</a>
+    <a href="/careers">Careers</a>
+    <a href="/status">Status</a>
+    <a href="/terms">Terms</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/contact">Contact</a>
+    <span>&copy; 2026 Acme Corp</span>
+  </footer>
+</body>
+</html>

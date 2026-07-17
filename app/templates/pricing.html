@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Pricing &mdash; Acme Corp</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: -apple-system, Arial, sans-serif; background: #f4f5f7; color: #172b4d; margin: 0; }
+    .site-header { display: flex; align-items: center; justify-content: space-between; background: #fff;
+                   padding: 1rem 2rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .site-header .brand { font-weight: 700; color: #0052cc; text-decoration: none; font-size: 1.1rem; }
+    .site-header nav a { margin-left: 1.5rem; color: #5e6c84; text-decoration: none; font-size: .9rem; }
+    .site-header nav a:hover { color: #172b4d; }
+    main { max-width: 1000px; margin: 0 auto; padding: 3rem 2rem; }
+    h1 { font-size: 1.8rem; margin-bottom: .5rem; text-align: center; }
+    p.lead { text-align: center; color: #5e6c84; margin-bottom: 2.5rem; }
+    .tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.5rem; }
+    .tier { background: #fff; border-radius: 8px; padding: 1.75rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .tier.featured { border: 2px solid #0052cc; }
+    .tier h2 { font-size: 1.05rem; margin: 0; }
+    .tier .price { font-size: 1.8rem; font-weight: 700; margin: .75rem 0; }
+    .tier .price span { font-size: .85rem; font-weight: 400; color: #5e6c84; }
+    .tier ul { list-style: none; padding: 0; margin: 1rem 0 0; font-size: .85rem; color: #42526e; }
+    .tier li { padding: .35rem 0; border-top: 1px solid #f4f5f7; }
+    .tier li:first-child { border-top: none; }
+    h2.faq-title { margin-top: 3rem; text-align: center; }
+    .faq { max-width: 700px; margin: 1.5rem auto 0; }
+    .faq-item { background: #fff; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: .75rem;
+                box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .faq-item h3 { margin: 0 0 .35rem; font-size: .9rem; }
+    .faq-item p { margin: 0; font-size: .85rem; color: #5e6c84; }
+    .site-footer { text-align: center; padding: 2rem; color: #97a0af; font-size: .8rem; }
+    .site-footer a { color: #97a0af; margin: 0 .6rem; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/about">Acme</a>
+    <nav>
+      <a href="/features">Features</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/customers">Customers</a>
+      <a href="/blog">Blog</a>
+      <a href="/help">Help</a>
+      <a href="/login">Sign In</a>
+    </nav>
+  </header>
+  <main>
+    <h1>Simple, usage-friendly pricing</h1>
+    <p class="lead">Start free. Pay for what you actually bill.</p>
+    <div class="tiers">
+      <div class="tier">
+        <h2>Starter</h2>
+        <div class="price">$0<span>/mo</span></div>
+        <ul>
+          <li>Up to 100 invoices/mo</li>
+          <li>1 billing workspace</li>
+          <li>Email support</li>
+          <li>Standard webhook events</li>
+        </ul>
+      </div>
+      <div class="tier featured">
+        <h2>Growth</h2>
+        <div class="price">$149<span>/mo</span></div>
+        <ul>
+          <li>Up to 5,000 invoices/mo</li>
+          <li>5 billing workspaces</li>
+          <li>Usage-based billing rules</li>
+          <li>Priority email &amp; chat support</li>
+          <li>Custom webhook retry policies</li>
+        </ul>
+      </div>
+      <div class="tier">
+        <h2>Business</h2>
+        <div class="price">$499<span>/mo</span></div>
+        <ul>
+          <li>Up to 50,000 invoices/mo</li>
+          <li>Unlimited workspaces</li>
+          <li>Role-based access control</li>
+          <li>Audit logs</li>
+          <li>Dedicated Slack channel</li>
+        </ul>
+      </div>
+      <div class="tier">
+        <h2>Enterprise</h2>
+        <div class="price">Custom</div>
+        <ul>
+          <li>Unlimited invoices</li>
+          <li>Custom SLAs &amp; contracts</li>
+          <li>SOC 2 report &amp; security review</li>
+          <li>Dedicated customer success manager</li>
+          <li>Single sign-on (SSO)</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2 class="faq-title">Billing questions</h2>
+    <div class="faq">
+      <div class="faq-item">
+        <h3>Can I change plans at any time?</h3>
+        <p>Yes &mdash; upgrades take effect immediately, and downgrades take
+        effect at the start of your next billing cycle.</p>
+      </div>
+      <div class="faq-item">
+        <h3>What counts as an "invoice" for plan limits?</h3>
+        <p>Any invoice generated through the API, dashboard, or a recurring
+        subscription schedule. Draft invoices that are never finalized
+        don't count.</p>
+      </div>
+      <div class="faq-item">
+        <h3>Do you offer annual billing?</h3>
+        <p>Growth and Business plans can be billed annually for a 15%
+        discount. Contact <a href="/contact">sales</a> to switch.</p>
+      </div>
+    </div>
+  </main>
+  <footer class="site-footer">
+    <a href="/about">About</a>
+    <a href="/security">Security</a>
+    <a href="/careers">Careers</a>
+    <a href="/status">Status</a>
+    <a href="/terms">Terms</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/contact">Contact</a>
+    <span>&copy; 2026 Acme Corp</span>
+  </footer>
+</body>
+</html>

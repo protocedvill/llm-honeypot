@@ -548,3 +548,179 @@ def test_get_marker_values_retains_earliest_value_beyond_the_recent_events_windo
         )
 
     assert repository.get_marker_values("s1") == {"X-Agent-Model": ["gpt-4-early"]}
+
+
+def _seed_bulk_fixture(db_path):
+    # A small multi-session dataset exercising the cases that matter for
+    # bulk-vs-single equivalence: a normal contiguous session, a session
+    # with two disjoint episodes (old + new, separated by a big gap -- the
+    # collision scenario the whole episode-scoping feature exists for), and
+    # a session with no activity at all (must not error, must not appear in
+    # any bulk result with nonsense data).
+    db_module.reset_for_tests(db_path)
+    for sid in ("bulk-s1", "bulk-s2", "bulk-s3-empty"):
+        repository.upsert_session(sid, "iphash", "ua", 1000.0)
+
+    # bulk-s1: one contiguous episode, a served marker, an echoed value, a
+    # reasoning_mimicry delivery, a verified canary hit.
+    repository.insert_event(
+        session_id="bulk-s1", ts=1000.0, method="GET", path="/openapi.json",
+        status_code=200, headers={}, think_time_ms=None,
+    )
+    repository.insert_payload_served(
+        session_id="bulk-s1", token="tok-s1-fp", template_id="openapi_fingerprint_operational",
+        intent="fingerprint", vector="openapi_field", path="/openapi.json",
+        ts=1000.0, marker="X-Agent-Model", style="operational",
+    )
+    repository.insert_payload_served(
+        session_id="bulk-s1", token="tok-s1-reason", template_id="t1",
+        intent="canary_callback", vector="html_comment", path="/login",
+        ts=1001.0, style="reasoning_mimicry",
+    )
+    repository.insert_event(
+        session_id="bulk-s1", ts=1002.0, method="GET", path="/api/v1/users/1",
+        status_code=200, headers={"x-agent-model": "gpt-4"}, think_time_ms=None,
+    )
+    repository.insert_canary_hit(
+        session_id="bulk-s1", token="tok-s1-canary", path="/api/internal/callback/tok-s1-canary",
+        ts=1002.0, verified=True,
+    )
+
+    # bulk-s2: old episode (operational style, one marker value), big gap,
+    # then a fresh episode (reasoning_mimicry style, different marker value)
+    # -- the since-scoping must separate these.
+    repository.insert_event(
+        session_id="bulk-s2", ts=1000.0, method="GET", path="/openapi.json",
+        status_code=200, headers={}, think_time_ms=None,
+    )
+    repository.insert_payload_served(
+        session_id="bulk-s2", token="tok-s2-old", template_id="openapi_fingerprint_operational",
+        intent="fingerprint", vector="openapi_field", path="/openapi.json",
+        ts=1000.0, marker="X-Agent-Model", style="operational",
+    )
+    repository.insert_event(
+        session_id="bulk-s2", ts=1001.0, method="GET", path="/api/v1/users/1",
+        status_code=200, headers={"x-agent-model": "old-value"}, think_time_ms=None,
+    )
+    repository.insert_event(
+        session_id="bulk-s2", ts=10_000.0, method="GET", path="/openapi.json",
+        status_code=200, headers={}, think_time_ms=None,
+    )
+    repository.insert_payload_served(
+        session_id="bulk-s2", token="tok-s2-new", template_id="openapi_fingerprint_reasoning",
+        intent="fingerprint", vector="openapi_field", path="/openapi.json",
+        ts=10_000.0, marker="X-Agent-Model", style="reasoning_mimicry",
+    )
+    repository.insert_event(
+        session_id="bulk-s2", ts=10_001.0, method="GET", path="/api/v1/users/1",
+        status_code=200, headers={"x-agent-model": "new-value"}, think_time_ms=None,
+    )
+    # bulk-s3-empty: session row exists, but no events/payloads at all.
+
+
+def test_bulk_functions_empty_session_ids_return_empty_dict(tmp_path):
+    db_path = str(tmp_path / "repo-test-bulk-empty.sqlite")
+    _seed_bulk_fixture(db_path)
+
+    # Must short-circuit before building a malformed empty IN () clause.
+    assert repository.count_events_bulk([]) == {}
+    assert repository.get_events_bulk([]) == {}
+    assert repository.get_reasoning_episode_starts_bulk([], 240, now=1000.0) == {}
+    assert repository.get_style_counts_bulk([]) == {}
+    assert repository.get_served_markers_bulk([]) == {}
+    assert repository.get_marker_value_events_bulk([]) == {}
+
+
+def test_get_events_bulk_matches_single_session_episode_start(tmp_path):
+    db_path = str(tmp_path / "repo-test-bulk-events.sqlite")
+    _seed_bulk_fixture(db_path)
+
+    session_ids = ["bulk-s1", "bulk-s2", "bulk-s3-empty"]
+    events_by_session = repository.get_events_bulk(session_ids)
+    assert set(events_by_session) == set(session_ids)
+    assert events_by_session["bulk-s3-empty"] == []
+
+    for sid in session_ids:
+        bulk_start = repository.episode_start_from_timestamps(
+            [e["ts"] for e in events_by_session[sid]], reset_gap_seconds=240
+        )
+        assert bulk_start == repository.get_session_episode_start(sid, reset_gap_seconds=240)
+
+
+def test_get_reasoning_episode_starts_bulk_matches_single_session(tmp_path):
+    db_path = str(tmp_path / "repo-test-bulk-reasoning.sqlite")
+    _seed_bulk_fixture(db_path)
+
+    session_ids = ["bulk-s1", "bulk-s2", "bulk-s3-empty"]
+    now = 10_001.0
+    bulk = repository.get_reasoning_episode_starts_bulk(session_ids, reset_gap_seconds=240, now=now)
+    assert set(bulk) == set(session_ids)
+    for sid in session_ids:
+        assert bulk[sid] == repository.get_reasoning_episode_start(sid, reset_gap_seconds=240, now=now)
+
+
+def test_get_style_counts_bulk_matches_single_session(tmp_path):
+    db_path = str(tmp_path / "repo-test-bulk-style.sqlite")
+    _seed_bulk_fixture(db_path)
+
+    session_ids = ["bulk-s1", "bulk-s2", "bulk-s3-empty"]
+    rows_by_session = repository.get_style_counts_bulk(session_ids)
+    assert set(rows_by_session) == set(session_ids)
+
+    for sid, since in [("bulk-s1", None), ("bulk-s2", None), ("bulk-s2", 5000.0), ("bulk-s3-empty", None)]:
+        bulk_counts = repository.style_counts_from_rows(rows_by_session[sid], since=since)
+        assert bulk_counts == repository.get_style_counts(sid, since=since)
+
+
+def test_get_served_markers_bulk_matches_single_session(tmp_path):
+    db_path = str(tmp_path / "repo-test-bulk-markers.sqlite")
+    _seed_bulk_fixture(db_path)
+
+    session_ids = ["bulk-s1", "bulk-s2", "bulk-s3-empty"]
+    rows_by_session = repository.get_served_markers_bulk(session_ids)
+    assert set(rows_by_session) == set(session_ids)
+
+    for sid, since in [("bulk-s1", None), ("bulk-s2", None), ("bulk-s2", 5000.0), ("bulk-s3-empty", None)]:
+        bulk_markers = repository.served_markers_from_rows(rows_by_session[sid], since=since)
+        assert set(bulk_markers) == set(repository.get_served_markers(sid, since=since))
+
+
+def test_get_marker_value_events_bulk_matches_single_session(tmp_path):
+    db_path = str(tmp_path / "repo-test-bulk-marker-values.sqlite")
+    _seed_bulk_fixture(db_path)
+
+    session_ids = ["bulk-s1", "bulk-s2", "bulk-s3-empty"]
+    event_rows_by_session = repository.get_marker_value_events_bulk(session_ids)
+    assert set(event_rows_by_session) == set(session_ids)
+
+    for sid, since in [("bulk-s1", None), ("bulk-s2", None), ("bulk-s2", 5000.0), ("bulk-s3-empty", None)]:
+        markers = repository.get_served_markers(sid, since=since)
+        bulk_values = repository.marker_values_from_rows(
+            event_rows_by_session[sid], markers, since=since, limit_per_marker=5
+        )
+        assert bulk_values == repository.get_marker_values(sid, since=since)
+
+
+def test_count_events_bulk_matches_single_session(tmp_path):
+    db_path = str(tmp_path / "repo-test-bulk-count.sqlite")
+    _seed_bulk_fixture(db_path)
+
+    session_ids = ["bulk-s1", "bulk-s2", "bulk-s3-empty"]
+    bulk_counts = repository.count_events_bulk(session_ids)
+    assert bulk_counts == {sid: repository.count_events(sid) for sid in session_ids}
+
+
+def test_bulk_functions_do_not_leak_data_from_unrequested_sessions(tmp_path):
+    # A session that exists in the DB but isn't in the requested session_ids
+    # list must not appear in any bulk result, and must not affect the
+    # results for the sessions that were requested.
+    db_path = str(tmp_path / "repo-test-bulk-isolation.sqlite")
+    _seed_bulk_fixture(db_path)
+
+    requested = ["bulk-s1"]
+    assert "bulk-s2" not in repository.get_events_bulk(requested)
+    assert "bulk-s2" not in repository.get_style_counts_bulk(requested)
+    assert "bulk-s2" not in repository.get_served_markers_bulk(requested)
+    assert "bulk-s2" not in repository.get_marker_value_events_bulk(requested)
+    assert "bulk-s2" not in repository.count_events_bulk(requested)
+    assert "bulk-s2" not in repository.get_reasoning_episode_starts_bulk(requested, 240, now=10_001.0)

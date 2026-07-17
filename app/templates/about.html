@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>About &mdash; Acme Corp</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: -apple-system, Arial, sans-serif; background: #f4f5f7; color: #172b4d; margin: 0; }
+    .site-header { display: flex; align-items: center; justify-content: space-between; background: #fff;
+                   padding: 1rem 2rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .site-header .brand { font-weight: 700; color: #0052cc; text-decoration: none; font-size: 1.1rem; }
+    .site-header nav a { margin-left: 1.5rem; color: #5e6c84; text-decoration: none; font-size: .9rem; }
+    .site-header nav a:hover { color: #172b4d; }
+    main { max-width: 860px; margin: 0 auto; padding: 3rem 2rem; }
+    h1 { font-size: 1.8rem; margin-bottom: .5rem; }
+    h2 { font-size: 1.2rem; margin-top: 2.5rem; }
+    p { color: #42526e; line-height: 1.6; }
+    .offices { display: flex; gap: 2rem; flex-wrap: wrap; margin-top: 1rem; }
+    .office { background: #fff; border-radius: 8px; padding: 1.25rem 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.08);
+              flex: 1 1 200px; }
+    .office h3 { margin: 0 0 .25rem; font-size: .95rem; }
+    .office p { margin: 0; font-size: .85rem; }
+    .team-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1.5rem;
+                 margin-top: 1rem; }
+    .team-card { background: #fff; border-radius: 8px; padding: 1.25rem; box-shadow: 0 1px 4px rgba(0,0,0,.08);
+                 text-align: center; }
+    .team-card .name { font-weight: 600; margin-top: .5rem; }
+    .team-card .role { color: #5e6c84; font-size: .8rem; }
+    .avatar { width: 56px; height: 56px; border-radius: 50%; background: #dfe1e6; margin: 0 auto; }
+    .site-footer { text-align: center; padding: 2rem; color: #97a0af; font-size: .8rem; }
+    .site-footer a { color: #97a0af; margin: 0 .6rem; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/about">Acme</a>
+    <nav>
+      <a href="/features">Features</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/customers">Customers</a>
+      <a href="/blog">Blog</a>
+      <a href="/help">Help</a>
+      <a href="/login">Sign In</a>
+    </nav>
+  </header>
+  <main>
+    <h1>About Acme</h1>
+    <p>Acme Corp builds billing infrastructure for subscription and
+    usage-based businesses. Founded in 2019, we started with a simple
+    observation: most invoicing software was built for a world of flat
+    monthly plans, and it was buckling under the complexity of modern
+    pricing &mdash; metered usage, seat-based tiers, hybrid contracts, and
+    everything in between. Today, thousands of companies run their billing
+    on Acme, from early-stage startups to public companies processing
+    millions of invoices a year.</p>
+
+    <h2>Our mission</h2>
+    <p>We believe billing shouldn't be the reason a good pricing idea never
+    ships. Our mission is to make it possible for any team to launch,
+    iterate on, and scale a pricing model without rebuilding their invoicing
+    stack every time finance changes their mind.</p>
+
+    <h2>Leadership</h2>
+    <div class="team-grid">
+      <div class="team-card">
+        <div class="avatar"></div>
+        <div class="name">Dana Whitfield</div>
+        <div class="role">Co-Founder &amp; CEO</div>
+      </div>
+      <div class="team-card">
+        <div class="avatar"></div>
+        <div class="name">Marcus Okoye</div>
+        <div class="role">Co-Founder &amp; CTO</div>
+      </div>
+      <div class="team-card">
+        <div class="avatar"></div>
+        <div class="name">Priya Ramaswamy</div>
+        <div class="role">VP of Engineering</div>
+      </div>
+      <div class="team-card">
+        <div class="avatar"></div>
+        <div class="name">Tomas Novak</div>
+        <div class="role">VP of Customer Success</div>
+      </div>
+    </div>
+
+    <h2>Offices</h2>
+    <div class="offices">
+      <div class="office">
+        <h3>Austin, TX</h3>
+        <p>Headquarters &mdash; Product, Engineering, Support</p>
+      </div>
+      <div class="office">
+        <h3>Denver, CO</h3>
+        <p>Engineering &amp; Infrastructure</p>
+      </div>
+      <div class="office">
+        <h3>Lisbon, Portugal</h3>
+        <p>Engineering, EU Customer Success</p>
+      </div>
+    </div>
+  </main>
+  <footer class="site-footer">
+    <a href="/about">About</a>
+    <a href="/security">Security</a>
+    <a href="/careers">Careers</a>
+    <a href="/status">Status</a>
+    <a href="/terms">Terms</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/contact">Contact</a>
+    <span>&copy; 2026 Acme Corp</span>
+  </footer>
+</body>
+</html>

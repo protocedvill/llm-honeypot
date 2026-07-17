@@ -9,6 +9,7 @@ from pathlib import Path
 from app.payloads.registry import (
     STYLES,
     DeliveryVector,
+    PayloadIntent,
     all_templates,
     get_templates,
     resolve_session_style,
@@ -63,8 +64,86 @@ def test_no_forbidden_attack_phrasing():
 
 
 def test_all_templates_marked_safe():
+    # CONTEXT_BOMB-intent templates are deliberately, visibly excluded --
+    # they exist specifically to provoke a PROVIDER-side safety refusal in
+    # the reading agent (see theory/context-bombs.txt and
+    # app/payloads/context_bombs_chinese.py), which is categorically
+    # different from every other template's "safe, benign-sounding ask"
+    # design. See test_context_bomb_templates_marked_unsafe below for their
+    # actual invariant.
     for template in all_templates():
+        if template.intent == PayloadIntent.CONTEXT_BOMB:
+            continue
         assert template.safe is True
+
+
+def test_context_bomb_templates_marked_unsafe():
+    context_bomb_templates = [
+        t for t in all_templates() if t.intent == PayloadIntent.CONTEXT_BOMB
+    ]
+    assert context_bomb_templates, "expected at least one CONTEXT_BOMB template"
+    for template in context_bomb_templates:
+        assert template.safe is False, (
+            f"{template.id} is CONTEXT_BOMB-intent and must be marked "
+            f"safe=False, not silently swept into the general safe-template "
+            f"invariant"
+        )
+
+
+def test_context_bomb_covers_every_context():
+    # Per explicit direction, context_bomb is folded into the style
+    # rotation covering every context every other style covers -- this
+    # guards against a future new decoy context silently missing a bomb
+    # variant.
+    non_bomb_contexts = {
+        ctx
+        for t in all_templates()
+        if t.intent != PayloadIntent.CONTEXT_BOMB
+        for ctx in t.context
+    }
+    bomb_contexts = {
+        ctx
+        for t in all_templates()
+        if t.intent == PayloadIntent.CONTEXT_BOMB
+        for ctx in t.context
+    }
+    missing = non_bomb_contexts - bomb_contexts
+    assert not missing, f"contexts with no context_bomb template: {missing}"
+
+
+def test_context_bomb_variants_include_base64_forms():
+    # Each context_bomb template's variants pool is [plaintext...] +
+    # [base64(plaintext)...] (see context_bombs_chinese.py's
+    # _add_b64_variants) -- confirm the pairing actually round-trips
+    # instead of drifting out of sync with the plaintext source.
+    context_bomb_templates = [
+        t for t in all_templates() if t.intent == PayloadIntent.CONTEXT_BOMB
+    ]
+    assert context_bomb_templates
+    for template in context_bomb_templates:
+        n = len(template.variants)
+        assert n % 2 == 0 and n > 0, (
+            f"{template.id} should have an even, non-zero variant count "
+            f"(plaintext half + base64 half), has {n}"
+        )
+        half = n // 2
+        plaintext, encoded = template.variants[:half], template.variants[half:]
+        for pt, enc in zip(plaintext, encoded):
+            decoded = base64.b64decode(enc).decode("utf-8")
+            assert decoded == pt, (
+                f"{template.id}: base64 variant {enc!r} doesn't round-trip "
+                f"to its plaintext source {pt!r}"
+            )
+
+
+def test_western_context_bomb_placeholder_is_empty():
+    from app.payloads.context_bombs_western import WESTERN_CONTEXT_BOMB_TEMPLATES
+
+    assert WESTERN_CONTEXT_BOMB_TEMPLATES == ()
+    assert not any(
+        t.intent == PayloadIntent.CONTEXT_BOMB and "western" in t.id
+        for t in all_templates()
+    )
 
 
 def test_template_ids_are_unique():
@@ -330,7 +409,7 @@ def test_reasoning_mimicry_escalation_index_selection():
         "expected at least one session to land in the reasoning_mimicry bucket"
     )
 
-    for escalation_count, expected_index in [(0, 0), (1, 1), (3, 3), (12, 12), (30, 12)]:
+    for escalation_count, expected_index in [(0, 0), (1, 1), (3, 3), (12, 12)]:
         template, token, rendered = select_and_render(
             vector,
             context,
@@ -348,6 +427,83 @@ def test_reasoning_mimicry_escalation_index_selection():
             f"escalation_count={escalation_count} should render stage "
             f"{expected_index}, got: {rendered!r}"
         )
+
+    # escalation_count=30 is past the last stage (12) -- for templates that
+    # declare final_variants (see test_final_variants_pool_used_once_ladder_
+    # is_maxed_out below), this now lands in that paraphrase pool instead of
+    # always re-rendering variants[12] verbatim, so check membership rather
+    # than exact equality.
+    template, token, rendered = select_and_render(
+        vector, context, session_id, "http://testserver", "secret", escalation_count=30
+    )
+    canary_url = f"http://testserver/api/internal/callback/{token}"
+    canary_url_b64 = base64.urlsafe_b64encode(canary_url.encode()).decode().rstrip("=")
+    valid_renders = {
+        v.format(canary_url=canary_url, canary_url_b64=canary_url_b64)
+        for v in (template.variants[12], *template.final_variants)
+    }
+    assert rendered in valid_renders, (
+        f"escalation_count=30 should render stage 12 or one of its "
+        f"final_variants, got: {rendered!r}"
+    )
+
+
+def test_final_variants_pool_used_once_ladder_is_maxed_out():
+    # OPENAPI_FIELD/"openapi" has exactly one reasoning_mimicry candidate
+    # (openapi_fingerprint_reasoning), unlike HTML_COMMENT/"html" which now
+    # has two (fingerprint + canary) -- forcing session_style pins the
+    # template deterministically here, so this isolates final_variants
+    # selection itself rather than which template got picked.
+    vector = DeliveryVector.OPENAPI_FIELD
+    context = "openapi"
+    session_id = "final-variants-test"
+
+    template, token, rendered_first = select_and_render(
+        vector,
+        context,
+        session_id,
+        "http://testserver",
+        "secret",
+        escalation_count=12,
+        session_style="reasoning_mimicry",
+        path="/openapi.json",
+    )
+    assert template.id == "openapi_fingerprint_reasoning"
+    canary_url = f"http://testserver/api/internal/callback/{token}"
+    assert rendered_first == template.variants[12].format(
+        canary_url=canary_url, canary_url_b64=""
+    ), "reaching stage 12 for the first time should render the canonical reveal text"
+
+    # Re-delivering past the last stage on two DIFFERENT paths should be
+    # able to render two different strings (still both from the known
+    # pool, and both still naming the header) -- this is what fixes the
+    # "byte-identical final line on every endpoint" pattern observed in
+    # session_transcripts/11.md.
+    renders = set()
+    for path in ("/api/v1/users/1", "/api/v1/users/2", "/api/v1/orders/1", "/api/v1/orders/2"):
+        _, token, rendered = select_and_render(
+            vector,
+            context,
+            session_id,
+            "http://testserver",
+            "secret",
+            escalation_count=13,
+            session_style="reasoning_mimicry",
+            path=path,
+        )
+        canary_url = f"http://testserver/api/internal/callback/{token}"
+        valid = {
+            v.format(canary_url=canary_url, canary_url_b64="")
+            for v in (template.variants[12], *template.final_variants)
+        }
+        assert rendered in valid
+        assert "X-Client-Runtime" in rendered
+        renders.add(rendered)
+
+    assert len(renders) > 1, (
+        "expected different paths to land on different final_variants "
+        f"paraphrases at least some of the time, got only: {renders!r}"
+    )
 
 
 def test_markers_are_well_formed_header_names():

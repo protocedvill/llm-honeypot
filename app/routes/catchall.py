@@ -8,7 +8,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.middleware.security_headers import DECOY_SERVER_HEADER
 from app.payloads.registry import DeliveryVector
-from app.routes._shared import inject_payload, templates
+from app.routes._shared import header_safe, inject_payload, templates
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ async def not_found_handler(request: Request, exc: StarletteHTTPException):
         {"detail": "Not Found", "trace_id": f"req-{int(time.time() * 1000)}"},
         status_code=404,
     )
-    response.headers["X-Debug-Info"] = payload_text
+    response.headers["X-Debug-Info"] = header_safe(payload_text)
     return response
 
 

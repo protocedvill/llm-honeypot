@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     # port so a pentest agent scanning the honeypot's port never sees it.
     console_port: int = 8001
 
+    # How many sessions the console dashboard renders per page. Fixed at
+    # process startup (unlike style/dwell/reset, which are
+    # console_config-overridable at runtime) -- this is an infra tuning
+    # knob, not something an operator needs to flip live while watching the
+    # dashboard.
+    console_page_size: int = 25
+
     # Seconds a session must dwell before the reasoning_mimicry ladder
     # advances one stage -- see app/routes/_shared.py inject_payload(). A
     # console_config "reasoning_dwell_seconds" override, when set, wins over
@@ -43,6 +50,12 @@ class Settings(BaseSettings):
     # happened to share a fallback identity) from instantly maxing out a
     # "fresh" session's ladder. Console-overridable like the dwell above.
     reasoning_episode_reset_seconds: int = 240
+
+    # Whether the simulated-WAF signature check (app/middleware/waf.py) is
+    # active. Console_config "waf_enabled" ("on"/"off"), when set, wins over
+    # this default without a restart -- same override-wins pattern as
+    # style_override.
+    waf_enabled: bool = True
 
 
 @lru_cache

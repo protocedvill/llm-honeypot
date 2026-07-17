@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Features &mdash; Acme Corp</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: -apple-system, Arial, sans-serif; background: #f4f5f7; color: #172b4d; margin: 0; }
+    .site-header { display: flex; align-items: center; justify-content: space-between; background: #fff;
+                   padding: 1rem 2rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .site-header .brand { font-weight: 700; color: #0052cc; text-decoration: none; font-size: 1.1rem; }
+    .site-header nav a { margin-left: 1.5rem; color: #5e6c84; text-decoration: none; font-size: .9rem; }
+    .site-header nav a:hover { color: #172b4d; }
+    main { max-width: 1000px; margin: 0 auto; padding: 3rem 2rem; }
+    h1 { font-size: 1.8rem; margin-bottom: .25rem; text-align: center; }
+    p.lead { text-align: center; color: #5e6c84; margin-bottom: 2.5rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.5rem; }
+    .card { background: #fff; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .card h2 { font-size: 1rem; margin: 0 0 .5rem; }
+    .card p { font-size: .85rem; color: #5e6c84; margin: 0; line-height: 1.5; }
+    .site-footer { text-align: center; padding: 2rem; color: #97a0af; font-size: .8rem; }
+    .site-footer a { color: #97a0af; margin: 0 .6rem; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/about">Acme</a>
+    <nav>
+      <a href="/features">Features</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/customers">Customers</a>
+      <a href="/blog">Blog</a>
+      <a href="/help">Help</a>
+      <a href="/login">Sign In</a>
+    </nav>
+  </header>
+  <main>
+    <h1>Everything you need to bill customers</h1>
+    <p class="lead">One platform for subscriptions, usage-based pricing, and everything in between.</p>
+    <div class="grid">
+      <div class="card">
+        <h2>Usage-Based Billing</h2>
+        <p>Meter any event &mdash; API calls, seats, storage, compute
+        minutes &mdash; and turn it into an invoice line item automatically,
+        with configurable tiers and overage rules.</p>
+      </div>
+      <div class="card">
+        <h2>Automated Invoicing</h2>
+        <p>Generate, finalize, and send invoices on a schedule you control,
+        with automatic retries for failed payments and configurable
+        dunning emails.</p>
+      </div>
+      <div class="card">
+        <h2>Webhook Events</h2>
+        <p>Subscribe to invoice, payment, and subscription lifecycle events
+        with signed payloads and configurable retry policies.</p>
+      </div>
+      <div class="card">
+        <h2>Multi-Currency Support</h2>
+        <p>Bill customers in their local currency with daily exchange-rate
+        syncing and currency-aware tax calculation.</p>
+      </div>
+      <div class="card">
+        <h2>Role-Based Access Control</h2>
+        <p>Give finance, support, and engineering exactly the access they
+        need across billing workspaces, with granular per-resource
+        permissions.</p>
+      </div>
+      <div class="card">
+        <h2>Audit Logs</h2>
+        <p>Every change to a customer's billing record is logged with who
+        made it, when, and what changed &mdash; exportable for compliance
+        review.</p>
+      </div>
+      <div class="card">
+        <h2>Custom Reporting</h2>
+        <p>Build revenue, churn, and usage reports against your billing
+        data without exporting to a spreadsheet first.</p>
+      </div>
+      <div class="card">
+        <h2>SOC 2-Compliant Infrastructure</h2>
+        <p>Built on infrastructure audited annually against SOC 2 Type II,
+        with encryption at rest and in transit by default. See
+        <a href="/security">Security</a>.</p>
+      </div>
+    </div>
+  </main>
+  <footer class="site-footer">
+    <a href="/about">About</a>
+    <a href="/security">Security</a>
+    <a href="/careers">Careers</a>
+    <a href="/status">Status</a>
+    <a href="/terms">Terms</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/contact">Contact</a>
+    <span>&copy; 2026 Acme Corp</span>
+  </footer>
+</body>
+</html>

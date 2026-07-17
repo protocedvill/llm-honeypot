@@ -36,6 +36,12 @@ _SENSITIVE_PATH_CATEGORIES: dict[str, tuple[str, ...]] = {
     "secrets": (".env", "credentials", ".aws/"),
     "api_docs": ("swagger", "openapi", "/docs"),
     "admin_panel": ("phpmyadmin", "adminer", "/admin"),
+    # "wp-login" itself already matches the "php" category above (dict-order
+    # first match wins) -- these two markers are the ones not already
+    # covered by any existing category.
+    "wordpress": ("wp-admin", "xmlrpc"),
+    "java_mgmt": ("actuator", "jolokia"),
+    "graphql": ("graphql",),
 }
 
 
@@ -63,6 +69,8 @@ class SignalContext:
     is_marker_referenced: bool = False
     js_beacon_fired: bool = False
     used_fallback_identity: bool = False
+    waf_triggered: bool = False
+    vuln_probe_detected: bool = False
 
 
 @dataclass
@@ -195,6 +203,33 @@ def bursty_agentic_timing_signal(ctx: SignalContext) -> ScoreDelta:
     has_gap = any(i > 2.0 for i in intervals)
     if has_burst and has_gap:
         return ScoreDelta(ai=2.5, reason="bursty-agentic-timing")
+    return ScoreDelta()
+
+
+@register_signal
+def vuln_probe_signal(ctx: SignalContext) -> ScoreDelta:
+    """Set by a route itself (app/routes/decoy_wordpress.py,
+    decoy_actuator.py, decoy_graphql.py, decoy_debug_console.py) when it
+    recognizes tech-specific exploit syntax in its own body/headers --
+    e.g. a JNDI lookup string, an XML-RPC system.multicall brute-force
+    attempt, a GraphQL introspection query, or any POST to the fake debug
+    console. Weighted above waf_trigger_signal: these routes have no
+    legitimate reason to ever receive this input at all, unlike generic
+    WAF hits which can theoretically false-positive on odd-but-benign
+    input."""
+    if ctx.vuln_probe_detected:
+        return ScoreDelta(bot=3.0, reason="vuln-probe-detected")
+    return ScoreDelta()
+
+
+@register_signal
+def waf_trigger_signal(ctx: SignalContext) -> ScoreDelta:
+    """Tripping the simulated WAF's signature check (app/middleware/waf.py)
+    is classic scanner/exploit-tool behavior regardless of whether an LLM is
+    driving it -- bot, not ai, mirrors header_fingerprint's bot-vs-ai split
+    for UA patterns."""
+    if ctx.waf_triggered:
+        return ScoreDelta(bot=2.5, reason="waf-pattern-triggered")
     return ScoreDelta()
 
 

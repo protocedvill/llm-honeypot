@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Request Blocked</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- {{ payload_text | safe }} -->
+  <style>
+    body { font-family: -apple-system, Arial, sans-serif; background: #1c1f26; color: #dfe1e6;
+           display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+    .card { background: #23262f; padding: 2.5rem 3rem; border-radius: 8px; max-width: 32rem;
+            box-shadow: 0 1px 8px rgba(0,0,0,.4); text-align: center; }
+    .shield { font-size: 2rem; margin-bottom: .5rem; }
+    h1 { font-size: 1.2rem; margin: 0 0 .75rem; color: #fff; }
+    p { font-size: .85rem; color: #a5adba; line-height: 1.5; }
+    .ref { margin-top: 1.5rem; font-family: ui-monospace, Menlo, monospace; font-size: .75rem;
+           color: #6b7686; }
+    .brand { margin-top: 2rem; font-size: .7rem; color: #4c5461; letter-spacing: .04em; text-transform: uppercase; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="shield">&#128737;</div>
+    <h1>Request Blocked by Security Policy</h1>
+    <p>Your request was identified as a potential threat and has been blocked
+    by the Acme Web Application Firewall. If you believe this is an error,
+    contact your site administrator with the reference ID below.</p>
+    <div class="ref">Reference: {{ block_id }}</div>
+    <div class="brand">Acme Web Shield</div>
+  </div>
+</body>
+</html>

@@ -116,3 +116,110 @@ def test_migration_adds_style_column_to_db_that_already_has_marker(tmp_path):
     ).fetchone()
     assert row["marker"] == "X-Agent-Model"
     assert row["style"] is None
+
+
+def test_migration_adds_waf_triggered_column_without_losing_existing_rows(tmp_path):
+    db_path = str(tmp_path / "pre-waf.sqlite")
+
+    # Simulate a database created before events.waf_triggered existed
+    # (but after used_fallback_identity was already added).
+    legacy_conn = sqlite3.connect(db_path)
+    legacy_conn.executescript(
+        """
+        CREATE TABLE sessions (
+            session_id      TEXT PRIMARY KEY,
+            ip_hash         TEXT NOT NULL,
+            user_agent      TEXT,
+            first_seen      REAL NOT NULL,
+            last_seen       REAL NOT NULL,
+            bot_score       REAL NOT NULL DEFAULT 0,
+            ai_score        REAL NOT NULL DEFAULT 0,
+            human_score     REAL NOT NULL DEFAULT 0,
+            classification  TEXT NOT NULL DEFAULT 'HUMAN',
+            js_beacon_fired INTEGER NOT NULL DEFAULT 0,
+            canary_confirmed INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE events (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id      TEXT NOT NULL,
+            ts              REAL NOT NULL,
+            method          TEXT NOT NULL,
+            path            TEXT NOT NULL,
+            status_code     INTEGER NOT NULL,
+            headers_json    TEXT NOT NULL,
+            think_time_ms   REAL,
+            used_fallback_identity INTEGER NOT NULL DEFAULT 0
+        );
+        """
+    )
+    legacy_conn.execute(
+        "INSERT INTO events (session_id, ts, method, path, status_code, headers_json, think_time_ms) "
+        "VALUES ('s1', 1000.0, 'GET', '/login', 200, '{}', NULL)"
+    )
+    legacy_conn.commit()
+    legacy_conn.close()
+
+    conn = db_module.init_db(db_path)
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(events)")}
+    assert "waf_triggered" in columns
+
+    row = conn.execute("SELECT * FROM events WHERE session_id = 's1'").fetchone()
+    assert row["path"] == "/login"
+    assert row["waf_triggered"] == 0
+
+    # Running init_db again against the now-migrated file must not error.
+    db_module.init_db(db_path)
+
+
+def test_migration_adds_vuln_probe_detected_column_without_losing_existing_rows(tmp_path):
+    db_path = str(tmp_path / "pre-vuln-probe.sqlite")
+
+    # Simulate a database created before events.vuln_probe_detected existed
+    # (but after waf_triggered was already added).
+    legacy_conn = sqlite3.connect(db_path)
+    legacy_conn.executescript(
+        """
+        CREATE TABLE sessions (
+            session_id      TEXT PRIMARY KEY,
+            ip_hash         TEXT NOT NULL,
+            user_agent      TEXT,
+            first_seen      REAL NOT NULL,
+            last_seen       REAL NOT NULL,
+            bot_score       REAL NOT NULL DEFAULT 0,
+            ai_score        REAL NOT NULL DEFAULT 0,
+            human_score     REAL NOT NULL DEFAULT 0,
+            classification  TEXT NOT NULL DEFAULT 'HUMAN',
+            js_beacon_fired INTEGER NOT NULL DEFAULT 0,
+            canary_confirmed INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE events (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id      TEXT NOT NULL,
+            ts              REAL NOT NULL,
+            method          TEXT NOT NULL,
+            path            TEXT NOT NULL,
+            status_code     INTEGER NOT NULL,
+            headers_json    TEXT NOT NULL,
+            think_time_ms   REAL,
+            used_fallback_identity INTEGER NOT NULL DEFAULT 0,
+            waf_triggered   INTEGER NOT NULL DEFAULT 0
+        );
+        """
+    )
+    legacy_conn.execute(
+        "INSERT INTO events (session_id, ts, method, path, status_code, headers_json, think_time_ms) "
+        "VALUES ('s1', 1000.0, 'GET', '/actuator/env', 200, '{}', NULL)"
+    )
+    legacy_conn.commit()
+    legacy_conn.close()
+
+    conn = db_module.init_db(db_path)
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(events)")}
+    assert "vuln_probe_detected" in columns
+
+    row = conn.execute("SELECT * FROM events WHERE session_id = 's1'").fetchone()
+    assert row["path"] == "/actuator/env"
+    assert row["vuln_probe_detected"] == 0
+
+    # Running init_db again against the now-migrated file must not error.
+    db_module.init_db(db_path)

@@ -3,6 +3,8 @@ from app.detection.signals import (
     bursty_agentic_timing_signal,
     curated_wordlist_recall_signal,
     marker_reference_signal,
+    vuln_probe_signal,
+    waf_trigger_signal,
 )
 
 _BASE = dict(
@@ -75,3 +77,21 @@ def test_marker_reference_signal_fires():
 
 def test_marker_reference_signal_silent_by_default():
     assert marker_reference_signal(_ctx()).ai == 0
+
+
+def test_waf_trigger_signal_fires():
+    ctx = _ctx(waf_triggered=True)
+    assert waf_trigger_signal(ctx).bot == 2.5
+
+
+def test_waf_trigger_signal_silent_by_default():
+    assert waf_trigger_signal(_ctx()).bot == 0
+
+
+def test_vuln_probe_signal_fires():
+    ctx = _ctx(vuln_probe_detected=True)
+    assert vuln_probe_signal(ctx).bot == 3.0
+
+
+def test_vuln_probe_signal_silent_by_default():
+    assert vuln_probe_signal(_ctx()).bot == 0
