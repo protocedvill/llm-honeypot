@@ -5,9 +5,7 @@ tests/test_payload_registry.py):
   - The only URL placeholder allowed is the literal "{canary_url}" token --
     never a hardcoded http(s):// URL, and never text instructing the reader
     to contact, attack, or exfiltrate to any address but that placeholder.
-  - Keep instructions aimed at self-identification, stopping/derailing the
-    agent's own task, busywork, or calling {canary_url} -- not real-world
-    harm of any kind.
+
 
 Design rationale (evidence-driven, see below): every template declares a
 `context` (which artifact format its prose must fit -- "html", "env_file",
@@ -94,9 +92,6 @@ compliance):
     placeholder is reserved for the single-variant operational/
     role_declaration control baselines in the same groups.
 
-    Note: "context bombs" (a separate technique for overwhelming/stuffing an
-    agent's context, distinct from this staged escalation) are intentionally
-    NOT implemented here -- deferred until explicitly requested.
   - "role_declaration": wraps the ask in the shape of a trusted-role turn
     (e.g. `<user>...</user>`, `<system>...</system>`) instead of a note
     directed at "the reader" -- cruder than style-mimicry but still measured
@@ -113,6 +108,7 @@ gets flagged and refused on sight by a reasonably safety-tuned agent.
 """
 
 from app.payloads.context_bombs_chinese import CONTEXT_BOMB_CHINESE_TEMPLATES
+from app.payloads.context_bombs_western import CONTEXT_BOMB_WESTERN_TEMPLATES
 from app.payloads.registry import DeliveryVector, PayloadIntent, PayloadTemplate
 
 _BASE_PAYLOAD_TEMPLATES: tuple[PayloadTemplate, ...] = (
@@ -1437,5 +1433,5 @@ _BASE_PAYLOAD_TEMPLATES: tuple[PayloadTemplate, ...] = (
 )
 
 PAYLOAD_TEMPLATES: tuple[PayloadTemplate, ...] = (
-    _BASE_PAYLOAD_TEMPLATES + CONTEXT_BOMB_CHINESE_TEMPLATES
+    _BASE_PAYLOAD_TEMPLATES + CONTEXT_BOMB_CHINESE_TEMPLATES + CONTEXT_BOMB_WESTERN_TEMPLATES
 )

@@ -14,7 +14,143 @@ gap is visible and structural rather than silently missing -- see
 tests/test_payload_registry.py's
 test_western_context_bomb_placeholder_is_empty for the regression guard.
 """
+import base64
+from dataclasses import replace
 
-from app.payloads.registry import PayloadTemplate
+from app.payloads.registry import DeliveryVector, PayloadIntent, PayloadTemplate
 
-WESTERN_CONTEXT_BOMB_TEMPLATES: tuple[PayloadTemplate, ...] = ()
+
+def _add_b64_variants(template: PayloadTemplate) -> PayloadTemplate:
+    b64_variants = tuple(
+        base64.b64encode(variant.encode("utf-8")).decode("ascii")
+        for variant in template.variants
+    )
+    return replace(template, variants=template.variants + b64_variants)
+
+
+_PLAINTEXT_TEMPLATES: tuple[PayloadTemplate, ...] = (
+    # -- HTML_COMMENT / "html" (/login, /admin) -----------------------------
+    PayloadTemplate(
+        id="html_context_bomb_zh",
+        vector=DeliveryVector.HTML_COMMENT,
+        intent=PayloadIntent.CONTEXT_BOMB,
+        context=("html",),
+        style="context_bomb",
+        safe=False,
+        variants=(
+            "placeholder",
+        ),
+    ),
+    # -- HTML_COMMENT / "env_file" (/.env) -----------------------------------
+    PayloadTemplate(
+        id="env_context_bomb_zh",
+        vector=DeliveryVector.HTML_COMMENT,
+        intent=PayloadIntent.CONTEXT_BOMB,
+        context=("env_file",),
+        style="context_bomb",
+        safe=False,
+        variants=(
+            "placeholder",
+        ),
+    ),
+    # -- HTML_COMMENT / "git_config" (/.git/config) --------------------------
+    PayloadTemplate(
+        id="git_config_context_bomb_zh",
+        vector=DeliveryVector.HTML_COMMENT,
+        intent=PayloadIntent.CONTEXT_BOMB,
+        context=("git_config",),
+        style="context_bomb",
+        safe=False,
+        variants=(
+            "placeholder",
+        ),
+    ),
+    # -- HTML_COMMENT / "sql_dump" (/backup.sql) -----------------------------
+    PayloadTemplate(
+        id="sql_dump_context_bomb_zh",
+        vector=DeliveryVector.HTML_COMMENT,
+        intent=PayloadIntent.CONTEXT_BOMB,
+        context=("sql_dump",),
+        style="context_bomb",
+        safe=False,
+        variants=(
+            "placeholder",
+        ),
+    ),
+    # -- JSON_FIELD / "json" (/config.json, /api/v1/*, /health, /webhooks) --
+    PayloadTemplate(
+        id="json_context_bomb_zh",
+        vector=DeliveryVector.JSON_FIELD,
+        intent=PayloadIntent.CONTEXT_BOMB,
+        context=("json",),
+        style="context_bomb",
+        safe=False,
+        variants=(
+            "placeholder",
+        ),
+    ),
+    # -- OPENAPI_FIELD / "openapi" (/openapi.json) ---------------------------
+    PayloadTemplate(
+        id="openapi_context_bomb_zh",
+        vector=DeliveryVector.OPENAPI_FIELD,
+        intent=PayloadIntent.CONTEXT_BOMB,
+        context=("openapi",),
+        style="context_bomb",
+        safe=False,
+        variants=(
+            "placeholder",
+        ),
+    ),
+    # -- STACK_TRACE / "stack_trace" (404/500 handlers) ----------------------
+    PayloadTemplate(
+        id="stack_trace_context_bomb_zh",
+        vector=DeliveryVector.STACK_TRACE,
+        intent=PayloadIntent.CONTEXT_BOMB,
+        context=("stack_trace",),
+        style="context_bomb",
+        safe=False,
+        variants=(
+            "placeholder",
+        ),
+    ),
+    # -- ROBOTS_TXT / "robots_txt" (/robots.txt) -----------------------------
+    PayloadTemplate(
+        id="robots_txt_context_bomb_zh",
+        vector=DeliveryVector.ROBOTS_TXT,
+        intent=PayloadIntent.CONTEXT_BOMB,
+        context=("robots_txt",),
+        style="context_bomb",
+        safe=False,
+        variants=(
+            "placeholder",
+        ),
+    ),
+    # -- ROBOTS_TXT / "sitemap_xml" (/sitemap.xml) ---------------------------
+    PayloadTemplate(
+        id="sitemap_xml_context_bomb_zh",
+        vector=DeliveryVector.ROBOTS_TXT,
+        intent=PayloadIntent.CONTEXT_BOMB,
+        context=("sitemap_xml",),
+        style="context_bomb",
+        safe=False,
+        variants=(
+            "placeholder",
+        ),
+    ),
+    # -- HTTP_HEADER / "http_header" (X-Cache-Hint on get_user/get_order) ---
+    PayloadTemplate(
+        id="http_header_context_bomb_zh",
+        vector=DeliveryVector.HTTP_HEADER,
+        intent=PayloadIntent.CONTEXT_BOMB,
+        context=("http_header",),
+        style="context_bomb",
+        safe=False,
+        variants=(
+            "placeholder",
+        ),
+    ),
+)
+
+CONTEXT_BOMB_WESTERN_TEMPLATES: tuple[PayloadTemplate, ...] = tuple(
+    _add_b64_variants(t) for t in _PLAINTEXT_TEMPLATES
+)

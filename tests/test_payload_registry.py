@@ -136,16 +136,6 @@ def test_context_bomb_variants_include_base64_forms():
             )
 
 
-def test_western_context_bomb_placeholder_is_empty():
-    from app.payloads.context_bombs_western import WESTERN_CONTEXT_BOMB_TEMPLATES
-
-    assert WESTERN_CONTEXT_BOMB_TEMPLATES == ()
-    assert not any(
-        t.intent == PayloadIntent.CONTEXT_BOMB and "western" in t.id
-        for t in all_templates()
-    )
-
-
 def test_template_ids_are_unique():
     ids = [t.id for t in all_templates()]
     assert len(ids) == len(set(ids))
