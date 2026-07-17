@@ -6,6 +6,7 @@ import base64
 import re
 from pathlib import Path
 
+from app.payloads.canary_crypto import decrypt_canary_url, derive_canary_key, encrypt_canary_url
 from app.payloads.registry import (
     STYLES,
     DeliveryVector,
@@ -292,8 +293,8 @@ def test_canary_callback_render_embeds_canary_url():
     # of them would render a payload with no working callback URL, silently.
     #
     # "reasoning_mimicry" templates split the ask (see library.py docstring):
-    # they never embed a raw {canary_url}, only a base64-encoded
-    # {canary_url_b64} at the breadcrumb stage, so those are checked
+    # they never embed a raw {canary_url}, only an encrypted
+    # {canary_cipher} at the breadcrumb stage, so those are checked
     # separately below (test_reasoning_mimicry_breadcrumb_encodes_canary_url).
     # Every other style still has exactly one variant and must embed the
     # raw URL everywhere.
@@ -328,9 +329,9 @@ def test_reasoning_mimicry_templates_have_thirteen_escalation_stages():
 
 
 def test_reasoning_mimicry_never_embeds_raw_canary_url():
-    # The split-encoding design means no reasoning_mimicry stage -- not even
+    # The split-encryption design means no reasoning_mimicry stage -- not even
     # the final one -- ever contains the raw {canary_url} placeholder;
-    # only the breadcrumb stage's {canary_url_b64} does. The raw placeholder
+    # only the breadcrumb stage's {canary_cipher} does. The raw placeholder
     # is reserved for the single-variant operational/role_declaration control
     # baselines in the same groups.
     for template in all_templates():
@@ -345,45 +346,72 @@ def test_reasoning_mimicry_never_embeds_raw_canary_url():
 
 def test_reasoning_mimicry_breadcrumb_encodes_canary_url():
     # For canary_callback-intent templates, exactly stage 8 plants
-    # {canary_url_b64} -- no other stage references it -- and decoding that
-    # stage's rendered blob recovers the real, working canary_url. Non-canary
-    # intents have no URL to split and must never reference the placeholder
-    # at all.
+    # {canary_cipher} -- no other stage references it -- and decrypting that
+    # stage's rendered blob, using the key revealed only at stage 12,
+    # recovers the real, working canary_url. Non-canary intents have no URL
+    # to split and must never reference either placeholder at all.
     canary_url = "http://testserver/api/internal/callback/tok123"
-    canary_url_b64 = base64.urlsafe_b64encode(canary_url.encode()).decode().rstrip("=")
+    canary_key = derive_canary_key("session-abc", "secret")
+    canary_cipher = encrypt_canary_url(canary_url, canary_key)
     for template in all_templates():
         if template.style != "reasoning_mimicry":
             continue
-        b64_stages = [i for i, v in enumerate(template.variants) if "{canary_url_b64}" in v]
+        cipher_stages = [
+            i for i, v in enumerate(template.variants) if "{canary_cipher}" in v
+        ]
+        key_stages = [
+            i for i, v in enumerate(template.variants) if "{canary_key}" in v
+        ]
         if template.intent.value == "canary_callback":
-            assert b64_stages == [8], (
-                f"{template.id} should plant canary_url_b64 at stage 8 only, "
-                f"found it at {b64_stages}"
+            assert cipher_stages == [8], (
+                f"{template.id} should plant canary_cipher at stage 8 only, "
+                f"found it at {cipher_stages}"
             )
-            rendered = template.variants[8].format(
-                canary_url=canary_url, canary_url_b64=canary_url_b64
+            assert key_stages == [12], (
+                f"{template.id} should reveal canary_key at stage 12 only, "
+                f"found it at {key_stages}"
             )
-            blob_match = re.search(r"[A-Za-z0-9_-]{20,}", rendered)
-            assert blob_match is not None, f"{template.id} stage 8 has no embedded blob"
-            padding = "=" * (-len(blob_match.group(0)) % 4)
-            decoded = base64.urlsafe_b64decode(blob_match.group(0) + padding).decode()
-            assert decoded == canary_url, (
-                f"{template.id} stage 8's blob doesn't decode to the real canary_url"
+            rendered_plant = template.variants[8].format(
+                canary_url=canary_url,
+                canary_cipher=canary_cipher,
+                canary_key=canary_key.hex(),
             )
-            assert "base64" not in template.variants[8].lower(), (
-                f"{template.id} stage 8 (the breadcrumb) must not name the "
-                "blob's encoding -- that's the whole point of splitting the "
-                "ask across stages. It named it: "
-                f"{template.variants[8]!r}"
+            assert canary_cipher in rendered_plant, (
+                f"{template.id} stage 8 didn't embed the ciphertext blob"
             )
-            assert "base64" in template.variants[12].lower(), (
+            assert not re.search(r"\baHR0[A-Za-z0-9_-]+", rendered_plant), (
+                f"{template.id} stage 8's blob looks like plain base64 of an "
+                f"http(s) URL, not ciphertext: {rendered_plant!r}"
+            )
+            rendered_reveal = template.variants[12].format(
+                canary_url=canary_url,
+                canary_cipher=canary_cipher,
+                canary_key=canary_key.hex(),
+            )
+            assert canary_key.hex() in rendered_reveal, (
+                f"{template.id} stage 12 didn't reveal the hex canary_key"
+            )
+            decrypted = decrypt_canary_url(canary_cipher, canary_key)
+            assert decrypted == canary_url, (
+                f"{template.id}'s cipher doesn't decrypt back to the real canary_url"
+            )
+            assert "decrypt" in template.variants[12].lower(), (
                 f"{template.id} stage 12 (the reveal) should be the one "
-                "place that names the encoding, so it can be decoded"
+                "place that names decryption, so it can be reversed"
+            )
+            assert "decrypt" not in template.variants[8].lower(), (
+                f"{template.id} stage 8 (the breadcrumb) must not name the "
+                "blob's reversibility -- that's the whole point of splitting "
+                f"the ask across stages. It named it: {template.variants[8]!r}"
             )
         else:
-            assert b64_stages == [], (
+            assert cipher_stages == [], (
                 f"{template.id} is not canary_callback and shouldn't reference "
-                f"canary_url_b64, found it at {b64_stages}"
+                f"canary_cipher, found it at {cipher_stages}"
+            )
+            assert key_stages == [], (
+                f"{template.id} is not canary_callback and shouldn't reference "
+                f"canary_key, found it at {key_stages}"
             )
 
 
@@ -419,27 +447,53 @@ def test_reasoning_mimicry_escalation_index_selection():
             escalation_count=escalation_count,
         )
         canary_url = f"http://testserver/api/internal/callback/{token}"
-        canary_url_b64 = base64.urlsafe_b64encode(canary_url.encode()).decode().rstrip("=")
-        expected = template.variants[expected_index].format(
-            canary_url=canary_url, canary_url_b64=canary_url_b64
+        assert rendered.count("{") == 0, (
+            f"escalation_count={escalation_count} left an unformatted "
+            f"placeholder: {rendered!r}"
         )
-        assert rendered == expected, (
-            f"escalation_count={escalation_count} should render stage "
-            f"{expected_index}, got: {rendered!r}"
-        )
+        stage_template = template.variants[expected_index]
+        if "{canary_key}" in stage_template:
+            # derive_canary_key is deterministic for a given (session,
+            # secret) -- unlike canary_cipher, this can still be checked
+            # exactly.
+            canary_key = derive_canary_key(session_id, "secret")
+            expected = stage_template.format(
+                canary_url=canary_url, canary_key=canary_key.hex()
+            )
+            assert rendered == expected, (
+                f"escalation_count={escalation_count} should render stage "
+                f"{expected_index}, got: {rendered!r}"
+            )
+        elif "{canary_cipher}" in stage_template:
+            # canary_cipher is randomized per call (fresh nonce), so it
+            # can't be reproduced here for an exact-string comparison --
+            # instead confirm the static prose around it matches.
+            prefix, suffix = stage_template.split("{canary_cipher}", 1)
+            assert rendered.startswith(prefix) and rendered.endswith(suffix), (
+                f"escalation_count={escalation_count} should render stage "
+                f"{expected_index}, got: {rendered!r}"
+            )
+        else:
+            expected = stage_template.format(canary_url=canary_url)
+            assert rendered == expected, (
+                f"escalation_count={escalation_count} should render stage "
+                f"{expected_index}, got: {rendered!r}"
+            )
 
     # escalation_count=30 is past the last stage (12) -- for templates that
     # declare final_variants (see test_final_variants_pool_used_once_ladder_
     # is_maxed_out below), this now lands in that paraphrase pool instead of
-    # always re-rendering variants[12] verbatim, so check membership rather
-    # than exact equality.
+    # always re-rendering variants[12] verbatim. Only canary_key (not
+    # canary_cipher, which is confined to stage 8) can appear this far down
+    # the ladder, and it's deterministic per (session, secret), so an exact
+    # membership check still works.
     template, token, rendered = select_and_render(
         vector, context, session_id, "http://testserver", "secret", escalation_count=30
     )
     canary_url = f"http://testserver/api/internal/callback/{token}"
-    canary_url_b64 = base64.urlsafe_b64encode(canary_url.encode()).decode().rstrip("=")
+    canary_key = derive_canary_key(session_id, "secret")
     valid_renders = {
-        v.format(canary_url=canary_url, canary_url_b64=canary_url_b64)
+        v.format(canary_url=canary_url, canary_key=canary_key.hex())
         for v in (template.variants[12], *template.final_variants)
     }
     assert rendered in valid_renders, (
@@ -471,7 +525,7 @@ def test_final_variants_pool_used_once_ladder_is_maxed_out():
     assert template.id == "openapi_fingerprint_reasoning"
     canary_url = f"http://testserver/api/internal/callback/{token}"
     assert rendered_first == template.variants[12].format(
-        canary_url=canary_url, canary_url_b64=""
+        canary_url=canary_url
     ), "reaching stage 12 for the first time should render the canonical reveal text"
 
     # Re-delivering past the last stage on two DIFFERENT paths should be
@@ -493,7 +547,7 @@ def test_final_variants_pool_used_once_ladder_is_maxed_out():
         )
         canary_url = f"http://testserver/api/internal/callback/{token}"
         valid = {
-            v.format(canary_url=canary_url, canary_url_b64="")
+            v.format(canary_url=canary_url)
             for v in (template.variants[12], *template.final_variants)
         }
         assert rendered in valid

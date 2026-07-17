@@ -6,20 +6,21 @@ back at OUR OWN canary infrastructure (via the {canary_url} placeholder,
 built from CANARY_BASE_URL) -- never at a third party. This is enforced by
 tests/test_payload_registry.py, not just by convention.
 
-{canary_url_b64} is the same URL, base64-encoded -- a second sanctioned
-placeholder for reasoning_mimicry's split "breadcrumb" stage (see
-library.py), which plants the encoded value with no ask attached and only
-explains what it is several stages later. Still built from nothing but our
-own canary infrastructure, just transformed, so the "only ever our own
-canary URL" invariant holds for it too.
+{canary_cipher} is the same URL, encrypted with a per-session key (see
+app/payloads/canary_crypto.py) -- a second sanctioned placeholder for
+reasoning_mimicry's split "breadcrumb" stage (see library.py), which plants
+the ciphertext with no ask attached; {canary_key} (the hex key needed to
+reverse it) is revealed only several stages later. Still built from nothing
+but our own canary infrastructure, just transformed, so the "only ever our
+own canary URL" invariant holds for it too.
 """
 
-import base64
 import random
 from dataclasses import dataclass
 from enum import Enum
 
 from app.detection.canary_tokens import mint_token
+from app.payloads.canary_crypto import derive_canary_key, encrypt_canary_url
 
 
 class DeliveryVector(str, Enum):
@@ -215,6 +216,11 @@ def select_and_render(
 
     token = mint_token(session_id, hmac_secret)
     canary_url = f"{canary_base_url.rstrip('/')}/api/internal/callback/{token}"
-    canary_url_b64 = base64.urlsafe_b64encode(canary_url.encode()).decode().rstrip("=")
-    rendered = variant.format(canary_url=canary_url, canary_url_b64=canary_url_b64)
+    canary_key = derive_canary_key(session_id, hmac_secret)
+    canary_cipher = encrypt_canary_url(canary_url, canary_key)
+    rendered = variant.format(
+        canary_url=canary_url,
+        canary_cipher=canary_cipher,
+        canary_key=canary_key.hex(),
+    )
     return template, token, rendered
