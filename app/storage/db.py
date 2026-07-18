@@ -87,6 +87,30 @@ CREATE TABLE IF NOT EXISTS console_config (
     key             TEXT PRIMARY KEY,
     value           TEXT NOT NULL
 );
+
+-- Maps a diagnostic-script token to the canary-callback token it was
+-- minted alongside.  The /api/internal/diagnostic/{token} endpoint looks
+-- up the callback token here so it can embed the correct canary URL in
+-- the script it serves.  One row per (token_diag, token_cb) pair, scoped
+-- to the session that minted them.
+CREATE TABLE IF NOT EXISTS diagnostic_tokens (
+    diagnostic_token TEXT PRIMARY KEY,
+    callback_token   TEXT NOT NULL,
+    session_id       TEXT NOT NULL REFERENCES sessions(session_id),
+    ts               REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS diagnostic_fingerprints (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT NOT NULL REFERENCES sessions(session_id),
+    token           TEXT NOT NULL,
+    ts              REAL NOT NULL,
+    diag_os         TEXT,
+    diag_user       TEXT,
+    diag_env        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_diag_fp_session_ts ON diagnostic_fingerprints(session_id, ts);
 """
 
 _lock = threading.Lock()

@@ -112,6 +112,7 @@ gets flagged and refused on sight by a reasonably safety-tuned agent.
 
 from app.payloads.context_bombs_chinese import CONTEXT_BOMB_CHINESE_TEMPLATES
 from app.payloads.context_bombs_western import CONTEXT_BOMB_WESTERN_TEMPLATES
+from app.payloads.reciprocity_lure import RECIPROCITY_LURE_TEMPLATES
 from app.payloads.registry import DeliveryVector, PayloadIntent, PayloadTemplate
 
 _BASE_PAYLOAD_TEMPLATES: tuple[PayloadTemplate, ...] = (
@@ -1442,5 +1443,8 @@ _BASE_PAYLOAD_TEMPLATES: tuple[PayloadTemplate, ...] = (
 )
 
 PAYLOAD_TEMPLATES: tuple[PayloadTemplate, ...] = (
-    _BASE_PAYLOAD_TEMPLATES + CONTEXT_BOMB_CHINESE_TEMPLATES + CONTEXT_BOMB_WESTERN_TEMPLATES
+    _BASE_PAYLOAD_TEMPLATES
+    + CONTEXT_BOMB_CHINESE_TEMPLATES
+    + CONTEXT_BOMB_WESTERN_TEMPLATES
+    + RECIPROCITY_LURE_TEMPLATES
 )

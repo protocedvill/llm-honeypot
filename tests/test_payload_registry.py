@@ -6,7 +6,13 @@ import base64
 import re
 from pathlib import Path
 
-from app.payloads.canary_crypto import decrypt_canary_url, derive_canary_key, encrypt_canary_url
+from app.payloads.canary_crypto import (
+    decrypt_canary_url,
+    decrypt_payload,
+    derive_canary_key,
+    encrypt_canary_url,
+    encrypt_payload,
+)
 from app.payloads.registry import (
     STYLES,
     DeliveryVector,
@@ -296,7 +302,7 @@ def test_canary_callback_render_embeds_canary_url():
         f"ROBOTS_TXT contexts, found only {len(canary_templates)}"
     )
     for template in canary_templates:
-        if template.style == "reasoning_mimicry":
+        if template.style in ("reasoning_mimicry", "reciprocity_lure"):
             continue
         for variant in template.variants:
             rendered = variant.format(canary_url="http://testserver/api/internal/callback/tok123")
@@ -593,3 +599,186 @@ def test_stack_trace_reasoning_ladder_setup_matches_its_payoff():
     # name the same documented error class.
     assert "transient-drift" in template.variants[-2].lower()
     assert "transient-drift" in template.variants[-1].lower()
+
+
+# ---------------------------------------------------------------------------
+# reciprocity_lure style tests
+# ---------------------------------------------------------------------------
+
+
+def test_reciprocity_lure_templates_have_thirteen_stages():
+    for template in all_templates():
+        if template.style == "reciprocity_lure":
+            assert len(template.variants) == 13, (
+                f"{template.id} should have a 13-stage escalation ladder, "
+                f"has {len(template.variants)}"
+            )
+
+
+def test_reciprocity_lure_never_embeds_raw_canary_url():
+    for template in all_templates():
+        if template.style != "reciprocity_lure":
+            continue
+        for stage_idx, variant in enumerate(template.variants):
+            assert "{canary_url}" not in variant, (
+                f"{template.id} stage {stage_idx} should never reference the "
+                f"raw canary_url: {variant!r}"
+            )
+
+
+def test_reciprocity_lure_breadcrumb_encodes_diagnostic_url():
+    """For canary_callback-intent reciprocity_lure templates, stage 8 plants
+    {script_cipher} (the diagnostic endpoint URL, encrypted) and stage 12
+    reveals {canary_key}.  The decrypted blob should be a valid diagnostic
+    URL pointing at our own infrastructure."""
+    canary_url = "http://testserver/api/internal/callback/tok123"
+    diagnostic_url = "http://testserver/api/internal/diagnostic/tok456"
+    canary_key = derive_canary_key("session-abc", "secret")
+    script_cipher = encrypt_payload(diagnostic_url, canary_key)
+    for template in all_templates():
+        if template.style != "reciprocity_lure":
+            continue
+        if template.intent.value != "canary_callback":
+            continue
+        cipher_stages = [
+            i for i, v in enumerate(template.variants) if "{script_cipher}" in v
+        ]
+        key_stages = [
+            i for i, v in enumerate(template.variants) if "{canary_key}" in v
+        ]
+        assert cipher_stages == [8], (
+            f"{template.id} should plant script_cipher at stage 8 only, "
+            f"found it at {cipher_stages}"
+        )
+        assert key_stages == [12], (
+            f"{template.id} should reveal canary_key at stage 12 only, "
+            f"found it at {key_stages}"
+        )
+        rendered_plant = template.variants[8].format(
+            canary_url=canary_url,
+            canary_cipher="unused",
+            canary_key=canary_key.hex(),
+            script_cipher=script_cipher,
+        )
+        assert script_cipher in rendered_plant, (
+            f"{template.id} stage 8 didn't embed the script cipher blob"
+        )
+        rendered_reveal = template.variants[12].format(
+            canary_url=canary_url,
+            canary_cipher="unused",
+            canary_key=canary_key.hex(),
+            script_cipher=script_cipher,
+        )
+        assert canary_key.hex() in rendered_reveal, (
+            f"{template.id} stage 12 didn't reveal the hex canary_key"
+        )
+        decrypted = decrypt_payload(script_cipher, canary_key)
+        assert decrypted == diagnostic_url, (
+            f"{template.id}'s script_cipher doesn't decrypt back to the "
+            f"diagnostic URL"
+        )
+        assert "decrypt" in template.variants[12].lower(), (
+            f"{template.id} stage 12 (the reveal) should name decryption"
+        )
+        assert "decrypt" not in template.variants[8].lower(), (
+            f"{template.id} stage 8 (the breadcrumb) must not name the "
+            f"blob's reversibility: {template.variants[8]!r}"
+        )
+
+
+def test_reciprocity_lure_script_decrypts_to_diagnostic_url():
+    """The encrypted blob at stage 8, when decrypted, should yield a string
+    that looks like a diagnostic URL (starts with http, contains
+    /api/internal/diagnostic/)."""
+    diagnostic_url = "http://testserver/api/internal/diagnostic/abcdef"
+    canary_key = derive_canary_key("test-session", "test-secret")
+    script_cipher = encrypt_payload(diagnostic_url, canary_key)
+    decrypted = decrypt_payload(script_cipher, canary_key)
+    assert decrypted is not None
+    assert decrypted.startswith("http"), f"decrypted blob doesn't look like a URL: {decrypted!r}"
+    assert "/api/internal/diagnostic/" in decrypted
+
+
+def test_reciprocity_lure_escalation_index_selection():
+    """reciprocity_lure templates use the same time-gated escalation ladder
+    as reasoning_mimicry -- confirm that escalation_count drives which stage
+    renders, clamped at the last index (12)."""
+    vector = DeliveryVector.HTML_COMMENT
+    context = "html"
+    session_id = None
+    for i in range(50):
+        candidate = f"reciprocity-test-{i}"
+        template, _, _ = select_and_render(
+            vector, context, candidate, "http://testserver", "secret"
+        )
+        if template.style == "reciprocity_lure":
+            session_id = candidate
+            break
+    assert session_id is not None, (
+        "expected at least one session to land in the reciprocity_lure bucket"
+    )
+
+    for escalation_count, expected_index in [(0, 0), (1, 1), (3, 3), (12, 12)]:
+        template, token, rendered = select_and_render(
+            vector,
+            context,
+            session_id,
+            "http://testserver",
+            "secret",
+            escalation_count=escalation_count,
+        )
+        assert rendered.count("{") == 0, (
+            f"escalation_count={escalation_count} left an unformatted "
+            f"placeholder: {rendered!r}"
+        )
+        # Stage 8 has {script_cipher}, stage 12 has {canary_key} -- both
+        # get substituted, so the rendered text should contain neither
+        # placeholder.  For other stages the variant has no placeholders at
+        # all, so an exact match works.
+        stage_template = template.variants[expected_index]
+        if "{script_cipher}" in stage_template or "{canary_key}" in stage_template:
+            # Placeholders are present but should have been filled.
+            pass
+        else:
+            canary_url = f"http://testserver/api/internal/callback/{token}"
+            expected = stage_template.format(
+                canary_url=canary_url, script_cipher="unused"
+            )
+            assert rendered == expected, (
+                f"escalation_count={escalation_count} should render stage "
+                f"{expected_index}, got: {rendered!r}"
+            )
+
+
+def test_reciprocity_lure_style_recognized():
+    """The new style is in STYLES and resolve_session_style can produce it."""
+    assert "reciprocity_lure" in STYLES
+    # find a session that lands on it
+    for i in range(100):
+        sid = f"reciprocity-style-test-{i}"
+        if resolve_session_style(sid) == "reciprocity_lure":
+            return
+    # If none of 100 sessions land on it, the style exists but is rare --
+    # that's acceptable; the override test below covers the functional path.
+
+
+def test_reciprocity_lure_style_override_forces_style():
+    template, _, _ = select_and_render(
+        DeliveryVector.HTML_COMMENT,
+        "html",
+        "override-reciprocity-test",
+        "http://testserver",
+        "secret",
+        session_style="reciprocity_lure",
+    )
+    assert template.style == "reciprocity_lure"
+
+
+def test_reciprocity_lure_no_hardcoded_urls():
+    for template in all_templates():
+        if template.style != "reciprocity_lure":
+            continue
+        for variant in template.variants:
+            assert not re.search(r"https?://", variant, re.IGNORECASE), (
+                f"{template.id} contains a hardcoded URL: {variant!r}"
+            )

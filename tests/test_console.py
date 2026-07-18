@@ -77,11 +77,10 @@ def test_timing_defaults_shown_and_updatable(console_client):
     response = console_client.get("/", headers=_auth_header())
     assert response.status_code == 200
     assert 'value="60"' in response.text
-    assert 'value="240"' in response.text
 
     post_response = console_client.post(
         "/timing",
-        data={"dwell_seconds": "30", "reset_seconds": "120"},
+        data={"dwell_seconds": "30"},
         headers=_auth_header(),
         follow_redirects=False,
     )
@@ -90,16 +89,14 @@ def test_timing_defaults_shown_and_updatable(console_client):
     from app.storage import repository
 
     assert repository.get_config("reasoning_dwell_seconds") == "30"
-    assert repository.get_config("reasoning_episode_reset_seconds") == "120"
 
     response = console_client.get("/", headers=_auth_header())
     assert 'value="30"' in response.text
-    assert 'value="120"' in response.text
 
 
 def test_timing_rejects_non_positive_values(console_client):
     response = console_client.post(
-        "/timing", data={"dwell_seconds": "0", "reset_seconds": "10"}, headers=_auth_header()
+        "/timing", data={"dwell_seconds": "0"}, headers=_auth_header()
     )
     assert response.status_code == 400
 
@@ -561,3 +558,75 @@ def test_dashboard_pagination_single_page_when_no_sessions(console_client):
     response = console_client.get("/", headers=_auth_header())
     assert response.status_code == 200
     assert "page 1 of 1" in response.text
+
+
+def test_dashboard_shows_diagnostic_fingerprints(console_client):
+    from app.storage import repository
+
+    repository.upsert_session("sess-diag", "iphash", "ua", 1000.0)
+    repository.insert_diagnostic_fingerprint(
+        session_id="sess-diag",
+        token="tok-diag",
+        ts=1001.0,
+        diag_os="Linux 6.1.0 aarch64",
+        diag_user="agent-runner",
+        diag_env="Y0FOVE1MTD0vdXNy...",
+    )
+
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    rows = response.text.split("<tr")
+    row = next(r for r in rows if "sess-diag" in r)
+    assert "Linux 6.1.0 aarch64" in row
+    assert "agent-runner" in row
+    assert "Y0FOVE1MTD0vdXNy..." in row
+
+
+def test_dashboard_escapes_diagnostic_fingerprint_values(console_client):
+    from app.storage import repository
+
+    repository.upsert_session("sess-diag-xss", "iphash", "ua", 1000.0)
+    repository.insert_diagnostic_fingerprint(
+        session_id="sess-diag-xss",
+        token="tok-xss",
+        ts=1001.0,
+        diag_os="<script>alert(1)</script>",
+        diag_user="root",
+        diag_env=None,
+    )
+
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    assert "<script>alert(1)</script>" not in response.text
+    assert "&lt;script&gt;" in response.text
+
+
+def test_dashboard_diagnostic_fingerprints_scoped_to_current_episode(console_client):
+    from app.storage import repository
+
+    repository.upsert_session("sess-diag-ep", "iphash", "ua", 1000.0)
+
+    # Old episode fingerprint.
+    repository.insert_diagnostic_fingerprint(
+        session_id="sess-diag-ep", token="tok-old", ts=1001.0,
+        diag_os="old-os", diag_user="old-user", diag_env=None,
+    )
+
+    # Big gap, then fresh episode.
+    repository.insert_event(
+        session_id="sess-diag-ep", ts=10_000.0, method="GET", path="/x",
+        status_code=200, headers={}, think_time_ms=None,
+    )
+    repository.insert_diagnostic_fingerprint(
+        session_id="sess-diag-ep", token="tok-new", ts=10_001.0,
+        diag_os="new-os", diag_user="new-user", diag_env=None,
+    )
+
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    rows = response.text.split("<tr")
+    row = next(r for r in rows if "sess-diag-ep" in r)
+    assert "new-os" in row
+    assert "new-user" in row
+    assert "old-os" not in row
+    assert "old-user" not in row

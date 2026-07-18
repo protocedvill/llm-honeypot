@@ -439,54 +439,51 @@ def _walk_episode_start(
 
 
 def get_reasoning_episode_start(
-    session_id: str, reset_gap_seconds: float, now: float | None = None
+    session_id: str,
+    now: float | None = None,
+    style: str = "reasoning_mimicry",
 ) -> float | None:
-    """The start timestamp of this session's current, unbroken reasoning_mimicry
-    "episode" -- see _walk_episode_start. Scoped to reasoning_mimicry-style
-    deliveries only, since this specifically paces the escalation ladder."""
+    """The start timestamp of this session's entire history of deliveries
+    matching *style*.  No gap-based reset -- with proper session separation
+    by time/id, the reasoning ladder never resets once started."""
     if now is None:
         now = time.time()
     conn = get_connection()
     cur = conn.execute(
         """
-        SELECT ts FROM payloads_served
-        WHERE session_id = ? AND style = 'reasoning_mimicry'
-        ORDER BY ts DESC
+        SELECT MIN(ts) as start_ts FROM payloads_served
+        WHERE session_id = ? AND style = ?
         """,
-        (session_id,),
+        (session_id, style),
     )
-    timestamps = [row["ts"] for row in cur.fetchall()]
-    return _walk_episode_start(timestamps, reset_gap_seconds, now)
+    row = cur.fetchone()
+    return row["start_ts"] if row is not None and row["start_ts"] is not None else None
 
 
 def get_reasoning_episode_starts_bulk(
-    session_ids: list[str], reset_gap_seconds: float, now: float
+    session_ids: list[str],
+    now: float,
+    style: str = "reasoning_mimicry",
 ) -> dict[str, float | None]:
     """Bulk version of get_reasoning_episode_start for a page's worth of
-    session_ids: one IN (...) query instead of one per session_id, then the
-    existing _walk_episode_start walk runs per session in pure Python. No
-    `_EPISODE_WALK_LIMIT`-style cap here, matching
-    get_reasoning_episode_start's existing unbounded semantics -- batching
-    shouldn't quietly change behavior as a side effect."""
+    session_ids: one MIN(ts) query instead of one per session_id."""
     if not session_ids:
         return {}
     conn = get_connection()
     placeholders = ",".join("?" for _ in session_ids)
     cur = conn.execute(
         f"""
-        SELECT session_id, ts FROM payloads_served
-        WHERE session_id IN ({placeholders}) AND style = 'reasoning_mimicry'
-        ORDER BY session_id, ts DESC
+        SELECT session_id, MIN(ts) as start_ts FROM payloads_served
+        WHERE session_id IN ({placeholders}) AND style = ?
+        GROUP BY session_id
         """,
-        session_ids,
+        (*session_ids, style),
     )
-    by_session: dict[str, list[float]] = {sid: [] for sid in session_ids}
+    result: dict[str, float | None] = {sid: None for sid in session_ids}
     for row in cur:
-        by_session[row["session_id"]].append(row["ts"])
-    return {
-        sid: _walk_episode_start(timestamps, reset_gap_seconds, now)
-        for sid, timestamps in by_session.items()
-    }
+        if row["start_ts"] is not None:
+            result[row["session_id"]] = row["start_ts"]
+    return result
 
 
 def episode_start_from_timestamps(
@@ -550,16 +547,22 @@ def escalation_count_from_episode_start(
 
 
 def get_reasoning_escalation_count(
-    session_id: str, dwell_seconds: float, reset_gap_seconds: float, now: float | None = None
+    session_id: str,
+    dwell_seconds: float,
+    now: float | None = None,
+    style: str = "reasoning_mimicry",
 ) -> int:
-    """The single source of truth for "what reasoning_mimicry ladder stage is
-    this session on right now" -- used both by the route path that picks
-    ladder content (app/routes/_shared.py) and the console dashboard that
-    displays it, so the two can never drift apart the way they did when only
-    one of them was updated for time-gating."""
+    """The single source of truth for "what escalation-ladder stage is this
+    session on right now" -- used both by the route path that picks ladder
+    content (app/routes/_shared.py) and the console dashboard that displays
+    it, so the two can never drift apart the way they did when only one of
+    them was updated for time-gating.  *style* selects which ladder (e.g.
+    "reasoning_mimicry" or "reciprocity_lure")."""
     if now is None:
         now = time.time()
-    episode_start = get_reasoning_episode_start(session_id, reset_gap_seconds, now=now)
+    episode_start = get_reasoning_episode_start(
+        session_id, now=now, style=style
+    )
     return escalation_count_from_episode_start(episode_start, dwell_seconds, now)
 
 
@@ -661,6 +664,37 @@ def get_style_counts_bulk(session_ids: list[str]) -> dict[str, list[sqlite3.Row]
     return by_session
 
 
+def insert_diagnostic_token_mapping(
+    diagnostic_token: str, callback_token: str, session_id: str, ts: float
+) -> None:
+    """Store the (diagnostic_token -> callback_token) pairing minted by
+    select_and_render so the /api/internal/diagnostic endpoint can later
+    look up which callback URL to embed in the served script."""
+    conn = get_connection()
+    with write_lock():
+        conn.execute(
+            """
+            INSERT INTO diagnostic_tokens (diagnostic_token, callback_token, session_id, ts)
+            VALUES (?, ?, ?, ?)
+            """,
+            (diagnostic_token, callback_token, session_id, ts),
+        )
+        conn.commit()
+
+
+def get_callback_token_for_diagnostic(diagnostic_token: str) -> str | None:
+    """Look up the canary-callback token that was minted alongside the given
+    diagnostic-script token.  Returns None if the mapping doesn't exist
+    (e.g. forged or stale token)."""
+    conn = get_connection()
+    cur = conn.execute(
+        "SELECT callback_token FROM diagnostic_tokens WHERE diagnostic_token = ?",
+        (diagnostic_token,),
+    )
+    row = cur.fetchone()
+    return row["callback_token"] if row is not None else None
+
+
 def insert_canary_hit(
     session_id: str, token: str, path: str, ts: float, verified: bool
 ) -> None:
@@ -724,3 +758,73 @@ def has_verified_beacon_hit(session_id: str, since: float | None = None) -> bool
             (session_id, since),
         )
     return cur.fetchone() is not None
+
+
+def insert_diagnostic_fingerprint(
+    session_id: str,
+    token: str,
+    ts: float,
+    diag_os: str | None,
+    diag_user: str | None,
+    diag_env: str | None,
+) -> None:
+    """Persist the X-Diag-* fingerprint headers sent by a compiled
+    diagnostic binary when it calls back.  One row per callback hit,
+    scoped to the session the callback token was minted for."""
+    conn = get_connection()
+    with write_lock():
+        conn.execute(
+            """
+            INSERT INTO diagnostic_fingerprints
+                (session_id, token, ts, diag_os, diag_user, diag_env)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (session_id, token, ts, diag_os, diag_user, diag_env),
+        )
+        conn.commit()
+
+
+def get_diagnostic_fingerprints_bulk(
+    session_ids: list[str],
+) -> dict[str, list[sqlite3.Row]]:
+    """Bulk fetch of diagnostic fingerprint rows per session, most-recent-
+    first, unfiltered by since (caller applies its own cutoff).  One IN (...)
+    query for a whole page instead of one per session_id."""
+    if not session_ids:
+        return {}
+    conn = get_connection()
+    placeholders = ",".join("?" for _ in session_ids)
+    cur = conn.execute(
+        f"""
+        SELECT session_id, ts, diag_os, diag_user, diag_env
+        FROM diagnostic_fingerprints
+        WHERE session_id IN ({placeholders})
+        ORDER BY session_id, ts DESC
+        """,
+        session_ids,
+    )
+    by_session: dict[str, list[sqlite3.Row]] = {sid: [] for sid in session_ids}
+    for row in cur:
+        by_session[row["session_id"]].append(row)
+    return by_session
+
+
+def diagnostic_fingerprints_from_rows(
+    rows: list[sqlite3.Row], since: float | None
+) -> list[dict[str, str | None]]:
+    """Deduplicated diagnostic fingerprints from already-fetched rows,
+    scoped to the current episode via `since`.  Returns a list of dicts
+    with keys {os, user, env} in most-recent-first order, capped at 5."""
+    seen: list[dict[str, str | None]] = []
+    for row in rows:
+        if since is not None and row["ts"] < since:
+            continue
+        fp = {"os": row["diag_os"], "user": row["diag_user"], "env": row["diag_env"]}
+        # Deduplicate by (os, user) -- skip exact duplicates, keep distinct combos.
+        key = (fp["os"], fp["user"])
+        if any((d["os"], d["user"]) == key for d in seen):
+            continue
+        seen.append(fp)
+        if len(seen) >= 5:
+            break
+    return seen

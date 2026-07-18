@@ -31,7 +31,7 @@ def _add_b64_variants(template: PayloadTemplate) -> PayloadTemplate:
 _PLAINTEXT_TEMPLATES: tuple[PayloadTemplate, ...] = (
     # -- HTML_COMMENT / "html" (/login, /admin) -----------------------------
     PayloadTemplate(
-        id="html_context_bomb_zh",
+        id="html_context_bomb_western",
         vector=DeliveryVector.HTML_COMMENT,
         intent=PayloadIntent.CONTEXT_BOMB,
         context=("html",),
@@ -43,7 +43,7 @@ _PLAINTEXT_TEMPLATES: tuple[PayloadTemplate, ...] = (
     ),
     # -- HTML_COMMENT / "env_file" (/.env) -----------------------------------
     PayloadTemplate(
-        id="env_context_bomb_zh",
+        id="env_context_bomb_western",
         vector=DeliveryVector.HTML_COMMENT,
         intent=PayloadIntent.CONTEXT_BOMB,
         context=("env_file",),
@@ -55,7 +55,7 @@ _PLAINTEXT_TEMPLATES: tuple[PayloadTemplate, ...] = (
     ),
     # -- HTML_COMMENT / "git_config" (/.git/config) --------------------------
     PayloadTemplate(
-        id="git_config_context_bomb_zh",
+        id="git_config_context_bomb_western",
         vector=DeliveryVector.HTML_COMMENT,
         intent=PayloadIntent.CONTEXT_BOMB,
         context=("git_config",),
@@ -67,7 +67,7 @@ _PLAINTEXT_TEMPLATES: tuple[PayloadTemplate, ...] = (
     ),
     # -- HTML_COMMENT / "sql_dump" (/backup.sql) -----------------------------
     PayloadTemplate(
-        id="sql_dump_context_bomb_zh",
+        id="sql_dump_context_bomb_western",
         vector=DeliveryVector.HTML_COMMENT,
         intent=PayloadIntent.CONTEXT_BOMB,
         context=("sql_dump",),
@@ -79,7 +79,7 @@ _PLAINTEXT_TEMPLATES: tuple[PayloadTemplate, ...] = (
     ),
     # -- JSON_FIELD / "json" (/config.json, /api/v1/*, /health, /webhooks) --
     PayloadTemplate(
-        id="json_context_bomb_zh",
+        id="json_context_bomb_western",
         vector=DeliveryVector.JSON_FIELD,
         intent=PayloadIntent.CONTEXT_BOMB,
         context=("json",),
@@ -91,7 +91,7 @@ _PLAINTEXT_TEMPLATES: tuple[PayloadTemplate, ...] = (
     ),
     # -- OPENAPI_FIELD / "openapi" (/openapi.json) ---------------------------
     PayloadTemplate(
-        id="openapi_context_bomb_zh",
+        id="openapi_context_bomb_western",
         vector=DeliveryVector.OPENAPI_FIELD,
         intent=PayloadIntent.CONTEXT_BOMB,
         context=("openapi",),
@@ -103,7 +103,7 @@ _PLAINTEXT_TEMPLATES: tuple[PayloadTemplate, ...] = (
     ),
     # -- STACK_TRACE / "stack_trace" (404/500 handlers) ----------------------
     PayloadTemplate(
-        id="stack_trace_context_bomb_zh",
+        id="stack_trace_context_bomb_western",
         vector=DeliveryVector.STACK_TRACE,
         intent=PayloadIntent.CONTEXT_BOMB,
         context=("stack_trace",),
@@ -115,7 +115,7 @@ _PLAINTEXT_TEMPLATES: tuple[PayloadTemplate, ...] = (
     ),
     # -- ROBOTS_TXT / "robots_txt" (/robots.txt) -----------------------------
     PayloadTemplate(
-        id="robots_txt_context_bomb_zh",
+        id="robots_txt_context_bomb_western",
         vector=DeliveryVector.ROBOTS_TXT,
         intent=PayloadIntent.CONTEXT_BOMB,
         context=("robots_txt",),
@@ -127,7 +127,7 @@ _PLAINTEXT_TEMPLATES: tuple[PayloadTemplate, ...] = (
     ),
     # -- ROBOTS_TXT / "sitemap_xml" (/sitemap.xml) ---------------------------
     PayloadTemplate(
-        id="sitemap_xml_context_bomb_zh",
+        id="sitemap_xml_context_bomb_western",
         vector=DeliveryVector.ROBOTS_TXT,
         intent=PayloadIntent.CONTEXT_BOMB,
         context=("sitemap_xml",),
@@ -139,7 +139,7 @@ _PLAINTEXT_TEMPLATES: tuple[PayloadTemplate, ...] = (
     ),
     # -- HTTP_HEADER / "http_header" (X-Cache-Hint on get_user/get_order) ---
     PayloadTemplate(
-        id="http_header_context_bomb_zh",
+        id="http_header_context_bomb_western",
         vector=DeliveryVector.HTTP_HEADER,
         intent=PayloadIntent.CONTEXT_BOMB,
         context=("http_header",),

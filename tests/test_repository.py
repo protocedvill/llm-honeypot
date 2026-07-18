@@ -193,7 +193,7 @@ def test_get_reasoning_episode_start_no_prior_delivery(tmp_path):
     db_module.reset_for_tests(db_path)
     repository.upsert_session("s1", "iphash", "ua", 1000.0)
 
-    assert repository.get_reasoning_episode_start("s1", reset_gap_seconds=240, now=2000.0) is None
+    assert repository.get_reasoning_episode_start("s1", now=2000.0) is None
 
 
 def test_get_reasoning_episode_start_contiguous_streak(tmp_path):
@@ -201,8 +201,8 @@ def test_get_reasoning_episode_start_contiguous_streak(tmp_path):
     db_module.reset_for_tests(db_path)
     repository.upsert_session("s1", "iphash", "ua", 1000.0)
 
-    # Three deliveries, each 30s apart -- well within a 240s reset gap --
-    # should all merge into one episode starting at the earliest.
+    # Three deliveries, each 30s apart -- should all merge into one episode
+    # starting at the earliest (no gap-based reset).
     for i, ts in enumerate([1000.0, 1030.0, 1060.0]):
         repository.insert_payload_served(
             session_id="s1",
@@ -215,18 +215,17 @@ def test_get_reasoning_episode_start_contiguous_streak(tmp_path):
             style="reasoning_mimicry",
         )
 
-    episode_start = repository.get_reasoning_episode_start("s1", reset_gap_seconds=240, now=1070.0)
+    episode_start = repository.get_reasoning_episode_start("s1", now=1070.0)
     assert episode_start == 1000.0
 
 
-def test_get_reasoning_episode_start_resets_after_gap(tmp_path):
+def test_get_reasoning_episode_start_never_resets(tmp_path):
     db_path = str(tmp_path / "repo-test-episode-3.sqlite")
     db_module.reset_for_tests(db_path)
     repository.upsert_session("s1", "iphash", "ua", 1000.0)
 
-    # An old delivery followed by a gap bigger than the reset window, then a
-    # recent one -- only the recent delivery should count toward the
-    # current episode.
+    # An old delivery followed by a gap, then a recent one -- the episode
+    # start is always the earliest timestamp (no gap-based reset).
     repository.insert_payload_served(
         session_id="s1",
         token="tok-old",
@@ -248,11 +247,11 @@ def test_get_reasoning_episode_start_resets_after_gap(tmp_path):
         style="reasoning_mimicry",
     )
 
-    episode_start = repository.get_reasoning_episode_start("s1", reset_gap_seconds=240, now=2010.0)
-    assert episode_start == 2000.0
+    episode_start = repository.get_reasoning_episode_start("s1", now=2010.0)
+    assert episode_start == 1000.0
 
 
-def test_get_reasoning_episode_start_none_when_most_recent_is_stale(tmp_path):
+def test_get_reasoning_episode_start_always_returns_earliest(tmp_path):
     db_path = str(tmp_path / "repo-test-episode-4.sqlite")
     db_module.reset_for_tests(db_path)
     repository.upsert_session("s1", "iphash", "ua", 1000.0)
@@ -268,11 +267,9 @@ def test_get_reasoning_episode_start_none_when_most_recent_is_stale(tmp_path):
         style="reasoning_mimicry",
     )
 
-    # `now` is far past the reset gap from the only delivery on record --
-    # this is the exact bug this repository function had to guard against:
-    # a single ancient row must not be treated as an active episode just
-    # because it's the only row that exists.
-    assert repository.get_reasoning_episode_start("s1", reset_gap_seconds=240, now=100_000.0) is None
+    # Even with `now` far in the future, the episode start is the earliest
+    # timestamp (no stale-reset logic).
+    assert repository.get_reasoning_episode_start("s1", now=100_000.0) == 1000.0
 
 
 def test_get_session_episode_start_none_with_no_activity(tmp_path):
@@ -625,7 +622,7 @@ def test_bulk_functions_empty_session_ids_return_empty_dict(tmp_path):
     # Must short-circuit before building a malformed empty IN () clause.
     assert repository.count_events_bulk([]) == {}
     assert repository.get_events_bulk([]) == {}
-    assert repository.get_reasoning_episode_starts_bulk([], 240, now=1000.0) == {}
+    assert repository.get_reasoning_episode_starts_bulk([], now=1000.0) == {}
     assert repository.get_style_counts_bulk([]) == {}
     assert repository.get_served_markers_bulk([]) == {}
     assert repository.get_marker_value_events_bulk([]) == {}
@@ -653,10 +650,10 @@ def test_get_reasoning_episode_starts_bulk_matches_single_session(tmp_path):
 
     session_ids = ["bulk-s1", "bulk-s2", "bulk-s3-empty"]
     now = 10_001.0
-    bulk = repository.get_reasoning_episode_starts_bulk(session_ids, reset_gap_seconds=240, now=now)
+    bulk = repository.get_reasoning_episode_starts_bulk(session_ids, now=now)
     assert set(bulk) == set(session_ids)
     for sid in session_ids:
-        assert bulk[sid] == repository.get_reasoning_episode_start(sid, reset_gap_seconds=240, now=now)
+        assert bulk[sid] == repository.get_reasoning_episode_start(sid, now=now)
 
 
 def test_get_style_counts_bulk_matches_single_session(tmp_path):
@@ -723,4 +720,4 @@ def test_bulk_functions_do_not_leak_data_from_unrequested_sessions(tmp_path):
     assert "bulk-s2" not in repository.get_served_markers_bulk(requested)
     assert "bulk-s2" not in repository.get_marker_value_events_bulk(requested)
     assert "bulk-s2" not in repository.count_events_bulk(requested)
-    assert "bulk-s2" not in repository.get_reasoning_episode_starts_bulk(requested, 240, now=10_001.0)
+    assert "bulk-s2" not in repository.get_reasoning_episode_starts_bulk(requested, now=10_001.0)

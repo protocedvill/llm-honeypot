@@ -41,8 +41,6 @@
     <form method="post" action="/timing" style="display:flex; gap:.5rem; align-items:center;">
       <label for="dwell_seconds"><strong>Reasoning dwell</strong> (s/stage)</label>
       <input type="number" name="dwell_seconds" id="dwell_seconds" min="1" value="{{ dwell_seconds }}">
-      <label for="reset_seconds"><strong>Episode reset gap</strong> (s)</label>
-      <input type="number" name="reset_seconds" id="reset_seconds" min="1" value="{{ reset_seconds }}">
       <button type="submit">Apply</button>
     </form>
 
@@ -87,6 +85,7 @@
           <th>Reasoning stage</th>
           <th>Payloads served</th>
           <th>Fingerprint data harvested</th>
+          <th>Binary fingerprints</th>
           <th>First seen (this episode)</th>
           <th>Last seen</th>
         </tr>
@@ -115,11 +114,20 @@
               <div><strong>{{ marker_name }}:</strong> {{ values|join(' | ') }}</div>
             {% endfor %}
           </td>
+          <td class="mono">
+            {% for fp in s.diagnostic_fingerprints %}
+              <div>
+                <strong>OS:</strong> {{ fp.os or '-' }}
+                &middot; <strong>User:</strong> {{ fp.user or '-' }}
+                {% if fp.env %}<br><strong>Env:</strong> {{ fp.env[:80] }}{% endif %}
+              </div>
+            {% endfor %}
+          </td>
           <td>{{ s.first_seen }}</td>
           <td>{{ s.last_seen }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="15">No sessions recorded yet.</td></tr>
+        <tr><td colspan="16">No sessions recorded yet.</td></tr>
         {% endfor %}
       </tbody>
     </table>

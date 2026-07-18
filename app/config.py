@@ -44,13 +44,6 @@ class Settings(BaseSettings):
     # this default without a restart.
     reasoning_dwell_seconds: int = 60
 
-    # How long a gap of inactivity (no reasoning_mimicry delivery) resets the
-    # escalation ladder back to stage 0 for a session -- prevents stale,
-    # long-past deliveries (e.g. from an unrelated earlier test run that
-    # happened to share a fallback identity) from instantly maxing out a
-    # "fresh" session's ladder. Console-overridable like the dwell above.
-    reasoning_episode_reset_seconds: int = 240
-
     # Whether the simulated-WAF signature check (app/middleware/waf.py) is
     # active. Console_config "waf_enabled" ("on"/"off"), when set, wins over
     # this default without a restart -- same override-wins pattern as

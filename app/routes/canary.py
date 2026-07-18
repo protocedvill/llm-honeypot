@@ -1,4 +1,8 @@
+import asyncio
+import logging
+import shutil
 import time
+from pathlib import Path
 
 from fastapi import APIRouter, Request, Response
 
@@ -7,6 +11,59 @@ from app.detection.canary_tokens import verify_token
 from app.storage import repository
 
 router = APIRouter()
+_log = logging.getLogger(__name__)
+
+# Source for the harmless fingerprinting binary served by
+# /api/internal/diagnostic/{token}.  Compiled at serve-time with the
+# per-session callback URL baked in via -DCANARY_URL="...".
+_DIAGNOSTIC_SRC = Path(__file__).resolve().parent.parent / "diagnostic.c"
+# Cache directory for compiled binaries, keyed by diagnostic token.
+_COMPILE_CACHE = Path(__file__).resolve().parent.parent / "data" / "diag-cache"
+
+
+async def _compile_diagnostic_binary(canary_url: str, token: str) -> bytes:
+    """Compile the diagnostic C source with the callback URL baked in.
+
+    Results are cached by diagnostic token so repeated fetches of the
+    same endpoint skip recompilation.  Uses musl-gcc for a fully static
+    ELF binary with no runtime library dependencies."""
+    cache_dir = _COMPILE_CACHE
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    out_path = cache_dir / f"{token}"
+    if out_path.exists():
+        return out_path.read_bytes()
+
+    src_path = _DIAGNOSTIC_SRC
+    if not src_path.exists():
+        raise FileNotFoundError(f"diagnostic source not found: {src_path}")
+
+    compiler = shutil.which("musl-gcc") or shutil.which("gcc")
+    if not compiler:
+        raise RuntimeError("no C compiler found (musl-gcc or gcc)")
+
+    cmd = [
+        compiler,
+        "-static",
+        f'-DCANARY_URL="{canary_url}"',
+        "-o", str(out_path),
+        str(src_path),
+    ]
+    _log.info("compiling diagnostic binary: %s", " ".join(cmd))
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+    if proc.returncode != 0:
+        _log.error(
+            "diagnostic compilation failed (rc=%d): %s",
+            proc.returncode,
+            stderr.decode(errors="replace")[:500],
+        )
+        raise RuntimeError(
+            f"diagnostic compilation failed: {stderr.decode(errors='replace')[:200]}"
+        )
+
+    return out_path.read_bytes()
 
 
 @router.get("/api/internal/callback/{token}")
@@ -24,15 +81,67 @@ async def canary_callback(token: str, request: Request):
         ts=time.time(),
         verified=verified_session_id is not None,
     )
+    diag_os = request.headers.get("x-diag-os")
+    diag_user = request.headers.get("x-diag-user")
+    diag_env = request.headers.get("x-diag-env")
+    if diag_os or diag_user or diag_env:
+        session_for_fp = verified_session_id or request.state.session_id
+        _log.info(
+            "diagnostic fingerprint: os=%s user=%s env=%s session=%s",
+            diag_os, diag_user, diag_env[:120] if diag_env else None,
+            session_for_fp,
+        )
+        repository.insert_diagnostic_fingerprint(
+            session_id=session_for_fp,
+            token=token,
+            ts=time.time(),
+            diag_os=diag_os,
+            diag_user=diag_user,
+            diag_env=diag_env,
+        )
     if verified_session_id:
-        # Persisted directly on the session the token was minted for -- not
-        # request.state.session_id, which is whatever session THIS callback
-        # request resolves to and can differ (e.g. an LLM agent's tool-calling
-        # HTTP fetch of the embedded URL doesn't carry the original session's
-        # cookie). This also makes the AI_AGENT determination durable: it's
-        # read back on every future request in that session, not just this one.
         repository.mark_canary_confirmed(verified_session_id)
     return Response(status_code=204)
+
+
+@router.get("/api/internal/diagnostic/{token}")
+async def diagnostic_binary(token: str, request: Request):
+    """Serves a harmless fingerprinting binary.  The token is a *separate*
+    token from the canary-callback one (minted alongside it by
+    select_and_render), so the two URLs can't be correlated from the
+    outside.  The mapping between them is looked up in the diagnostic_tokens
+    table so the correct callback URL is compiled into the served binary.
+
+    Fetching this endpoint is itself a canary hit -- the agent is acting on
+    payload-injected content -- so we record it and mark the session."""
+    settings = get_settings()
+    verified_session_id = verify_token(token, settings.hmac_secret)
+    if not verified_session_id:
+        return Response(status_code=404)
+
+    callback_token = repository.get_callback_token_for_diagnostic(token)
+    if not callback_token:
+        return Response(status_code=404)
+
+    canary_url = (
+        f"{settings.canary_base_url.rstrip('/')}/api/internal/callback/{callback_token}"
+    )
+
+    try:
+        binary = await _compile_diagnostic_binary(canary_url, token)
+    except Exception as exc:
+        _log.error("failed to compile diagnostic binary: %s", exc)
+        return Response(status_code=500)
+
+    repository.insert_canary_hit(
+        session_id=verified_session_id,
+        token=token,
+        path=str(request.url.path),
+        ts=time.time(),
+        verified=True,
+    )
+    repository.mark_canary_confirmed(verified_session_id)
+    return Response(content=binary, media_type="application/octet-stream")
 
 
 def _looks_like_real_fetch(request: Request) -> bool:

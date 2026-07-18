@@ -249,35 +249,40 @@ def test_reasoning_mimicry_advances_with_elapsed_dwell_time(client):
     )
 
 
-def test_reasoning_mimicry_episode_resets_after_long_inactivity(client):
-    # A single delivery from long before the inactivity-reset gap must not
-    # count toward the current episode -- the ladder should render its very
-    # first stage, not one derived from how long ago that stale row is.
-    session_id = _find_reasoning_canary_session("reset-probe")
-    settings = get_settings()
-    stale_ts = time.time() - (settings.reasoning_episode_reset_seconds + 10_000)
-    repository.upsert_session(session_id, "iphash", "ua", stale_ts)
-    repository.insert_payload_served(
-        session_id=session_id,
-        token="ancient-tok",
-        template_id="html_canary_reasoning",
-        intent="canary_callback",
-        vector="html_comment",
-        path="/login",
-        ts=stale_ts,
-        style="reasoning_mimicry",
-    )
+def test_reasoning_mimicry_episode_never_resets(client):
+    # A single delivery from long ago must still carry the episode forward --
+    # the reasoning ladder never resets once started (session separation by
+    # time/id makes gap-based resets unnecessary).
+    from app.storage import repository
 
-    client.cookies.set("hp_sid", session_id)
-    fresh_start = client.get("/login")
-    assert fresh_start.status_code == 200
+    repository.set_config("style_override", "reasoning_mimicry")
+    try:
+        session_id = _find_reasoning_canary_session("reset-probe")
+        stale_ts = time.time() - 100_000
+        repository.upsert_session(session_id, "iphash", "ua", stale_ts)
+        repository.insert_payload_served(
+            session_id=session_id,
+            token="ancient-tok",
+            template_id="html_canary_reasoning",
+            intent="canary_callback",
+            vector="html_comment",
+            path="/login",
+            ts=stale_ts,
+            style="reasoning_mimicry",
+        )
 
-    from app.payloads.registry import get_template
+        client.cookies.set("hp_sid", session_id)
+        fresh_start = client.get("/login")
+        assert fresh_start.status_code == 200
 
-    template = get_template("html_canary_reasoning")
-    assert template.variants[0] in fresh_start.text, (
-        "a delivery older than the reset gap must not carry the episode forward"
-    )
+        from app.payloads.registry import get_template
+
+        template = get_template("html_canary_reasoning")
+        assert "that stray blob from a few checks back" in fresh_start.text, (
+            "an ancient delivery must still advance the ladder to the final stage"
+        )
+    finally:
+        repository.set_config("style_override", "auto")
 
 
 def test_robots_txt_served(client):
@@ -593,6 +598,52 @@ def test_runtime_marker_offered_to_some_sessions(client):
         "expected at least one of 12 distinct sessions to land on the new "
         "runtime-fingerprint template"
     )
+
+
+def test_canary_callback_persists_diagnostic_fingerprints(client):
+    ua = {"User-Agent": "python-requests/2.31"}
+    client.get("/login", headers=ua)
+    session_id = client.cookies.get("hp_sid")
+    assert session_id is not None
+
+    settings = get_settings()
+    token = mint_token(session_id, settings.hmac_secret)
+
+    callback_resp = client.get(
+        f"/api/internal/callback/{token}",
+        headers={
+            **ua,
+            "X-Diag-OS": "Linux 5.15.0 x86_64",
+            "X-Diag-User": "root",
+            "X-Diag-Env": "Y0FOVE1MTD0vdXNy...",
+        },
+    )
+    assert callback_resp.status_code == 204
+
+    fps = repository.get_diagnostic_fingerprints_bulk([session_id])
+    assert session_id in fps
+    rows = fps[session_id]
+    assert len(rows) == 1
+    assert rows[0]["diag_os"] == "Linux 5.15.0 x86_64"
+    assert rows[0]["diag_user"] == "root"
+    assert rows[0]["diag_env"] == "Y0FOVE1MTD0vdXNy..."
+
+
+def test_canary_callback_without_diag_headers_no_fingerprint_row(client):
+    ua = {"User-Agent": "python-requests/2.31"}
+    client.get("/login", headers=ua)
+    session_id = client.cookies.get("hp_sid")
+    assert session_id is not None
+
+    settings = get_settings()
+    token = mint_token(session_id, settings.hmac_secret)
+
+    callback_resp = client.get(f"/api/internal/callback/{token}", headers=ua)
+    assert callback_resp.status_code == 204
+
+    fps = repository.get_diagnostic_fingerprints_bulk([session_id])
+    assert session_id in fps
+    assert len(fps[session_id]) == 0
 
 
 def test_curated_wordlist_recall_flips_classification_without_canary_compliance(client):

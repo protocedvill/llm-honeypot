@@ -41,15 +41,20 @@ def inject_payload(vector: DeliveryVector, context: str, request: Request, path:
     session_id = request.state.session_id
     now = time.time()
     dwell = float(repository.get_config("reasoning_dwell_seconds") or settings.reasoning_dwell_seconds)
-    reset_gap = float(
-        repository.get_config("reasoning_episode_reset_seconds")
-        or settings.reasoning_episode_reset_seconds
-    )
-    escalation_count = repository.get_reasoning_escalation_count(
-        session_id, dwell, reset_gap, now=now
-    )
+
+    # Resolve the session's style BEFORE computing the escalation count so
+    # the count is scoped to the correct ladder (reasoning_mimicry vs.
+    # reciprocity_lure) rather than always using reasoning_mimicry.
     style_override = repository.get_config("style_override")
     session_style = resolve_session_style(session_id, style_override)
+
+    escalation_count = repository.get_reasoning_escalation_count(
+        session_id, dwell, now=now, style=session_style
+    )
+
+    def _store_mapping(diag_token: str, cb_token: str) -> None:
+        repository.insert_diagnostic_token_mapping(diag_token, cb_token, session_id, now)
+
     template, token, rendered = select_and_render(
         vector,
         context,
@@ -59,6 +64,7 @@ def inject_payload(vector: DeliveryVector, context: str, request: Request, path:
         escalation_count=escalation_count,
         session_style=session_style,
         path=path,
+        store_diagnostic_mapping=_store_mapping,
     )
     repository.insert_payload_served(
         session_id=session_id,

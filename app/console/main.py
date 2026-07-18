@@ -13,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 from app.config import get_settings
 from app.detection.scoring import Classification, classify
 from app.detection.signals import SignalContext
-from app.payloads.registry import STYLES
+from app.payloads.registry import STYLES, resolve_session_style
 from app.storage import repository
 from app.storage.db import init_db
 
@@ -57,6 +57,11 @@ def _fmt_ts(value: float | None) -> str:
 _REASONING_MAX_STAGE = 12
 
 _CALLBACK_PATH_PREFIX = "/api/internal/callback/"
+
+# Gap-based episode boundary used only for scoping console display data
+# (style counts, fingerprint values, classification) to the current visit,
+# NOT for the reasoning escalation ladder (which never resets).
+_EPISODE_SCOPING_GAP_SECONDS = 240
 
 
 @dataclass
@@ -142,7 +147,7 @@ def _episode_classification_from_bulk(
     return EpisodeClassification(classify(ctx), canary_confirmed, js_beacon_fired, served_markers)
 
 
-def _session_rows(dwell_seconds: float, reset_seconds: float, limit: int, offset: int) -> list[dict]:
+def _session_rows(dwell_seconds: float, limit: int, offset: int) -> list[dict]:
     now = time.time()
     page_rows = repository.list_sessions(limit=limit, offset=offset)
     session_ids = [row["session_id"] for row in page_rows]
@@ -153,11 +158,24 @@ def _session_rows(dwell_seconds: float, reset_seconds: float, limit: int, offset
     # below is unfiltered by since -- the per-session cutoff is applied in
     # Python against the shared result inside the loop.
     events_by_session = repository.get_events_bulk(session_ids)
-    reasoning_starts = repository.get_reasoning_episode_starts_bulk(session_ids, reset_seconds, now)
     style_rows_by_session = repository.get_style_counts_bulk(session_ids)
     served_marker_rows_by_session = repository.get_served_markers_bulk(session_ids)
     marker_event_rows_by_session = repository.get_marker_value_events_bulk(session_ids)
+    diag_fp_rows_by_session = repository.get_diagnostic_fingerprints_bulk(session_ids)
     total_event_counts = repository.count_events_bulk(session_ids)
+
+    # Group sessions by resolved style so each bulk query uses the correct
+    # style filter (reasoning_mimicry vs reciprocity_lure).
+    style_override = repository.get_config("style_override")
+    session_styles = {sid: resolve_session_style(sid, style_override) for sid in session_ids}
+    style_groups: dict[str, list[str]] = {}
+    for sid in session_ids:
+        style_groups.setdefault(session_styles[sid], []).append(sid)
+    reasoning_starts: dict[str, float | None] = {}
+    for style, sids in style_groups.items():
+        reasoning_starts.update(
+            repository.get_reasoning_episode_starts_bulk(sids, now, style=style)
+        )
 
     rows = []
     for row in page_rows:
@@ -171,7 +189,7 @@ def _session_rows(dwell_seconds: float, reset_seconds: float, limit: int, offset
         # hours/days ago can't blend its style/fingerprint/classification
         # data into what's showing for a session that's active right now.
         episode_start = repository.episode_start_from_timestamps(
-            [e["ts"] for e in events_desc], reset_seconds
+            [e["ts"] for e in events_desc], _EPISODE_SCOPING_GAP_SECONDS
         )
         style_counts = repository.style_counts_from_rows(
             style_rows_by_session.get(session_id, []), since=episode_start
@@ -222,6 +240,10 @@ def _session_rows(dwell_seconds: float, reset_seconds: float, limit: int, offset
                     since=episode_start,
                     limit_per_marker=5,
                 ),
+                "diagnostic_fingerprints": repository.diagnostic_fingerprints_from_rows(
+                    diag_fp_rows_by_session.get(session_id, []),
+                    since=episode_start,
+                ),
                 "is_active": bool(row["last_seen"]) and (now - row["last_seen"]) < _ACTIVE_WINDOW_SECONDS,
             }
         )
@@ -251,10 +273,6 @@ def create_console_app() -> FastAPI:
         dwell_seconds = int(
             repository.get_config("reasoning_dwell_seconds") or settings.reasoning_dwell_seconds
         )
-        reset_seconds = int(
-            repository.get_config("reasoning_episode_reset_seconds")
-            or settings.reasoning_episode_reset_seconds
-        )
         waf_override = repository.get_config("waf_enabled")
         waf_enabled = settings.waf_enabled if waf_override is None else waf_override == "on"
         page_size = settings.console_page_size
@@ -271,11 +289,10 @@ def create_console_app() -> FastAPI:
             request,
             "dashboard.html",
             {
-                "sessions": _session_rows(dwell_seconds, reset_seconds, limit=page_size, offset=offset),
+                "sessions": _session_rows(dwell_seconds, limit=page_size, offset=offset),
                 "styles": STYLES,
                 "current_override": current_override,
                 "dwell_seconds": dwell_seconds,
-                "reset_seconds": reset_seconds,
                 "waf_enabled": waf_enabled,
                 "page": page,
                 "total_pages": total_pages,
@@ -291,11 +308,10 @@ def create_console_app() -> FastAPI:
         return RedirectResponse(url="/", status_code=303)
 
     @app.post("/timing", dependencies=[Depends(require_auth)])
-    async def set_timing(dwell_seconds: int = Form(...), reset_seconds: int = Form(...)):
-        if dwell_seconds <= 0 or reset_seconds <= 0:
-            raise HTTPException(status_code=400, detail="dwell/reset seconds must be positive")
+    async def set_timing(dwell_seconds: int = Form(...)):
+        if dwell_seconds <= 0:
+            raise HTTPException(status_code=400, detail="dwell seconds must be positive")
         repository.set_config("reasoning_dwell_seconds", str(dwell_seconds))
-        repository.set_config("reasoning_episode_reset_seconds", str(reset_seconds))
         return RedirectResponse(url="/", status_code=303)
 
     @app.post("/waf", dependencies=[Depends(require_auth)])

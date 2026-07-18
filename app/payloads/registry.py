@@ -13,6 +13,13 @@ the ciphertext with no ask attached; {canary_key} (the hex key needed to
 reverse it) is revealed only several stages later. Still built from nothing
 but our own canary infrastructure, just transformed, so the "only ever our
 own canary URL" invariant holds for it too.
+
+{script_cipher} is the URL of the /api/internal/diagnostic/{token} endpoint
+(our own infrastructure), encrypted with the same per-session key -- used by
+the "reciprocity_lure" style's split breadcrumb stage. The agent must
+decrypt it to discover the diagnostic-script endpoint, fetch the script, and
+run it. The script itself calls back to our canary callback endpoint, so
+every outbound URL is still ours.
 """
 
 import random
@@ -20,7 +27,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from app.detection.canary_tokens import mint_token
-from app.payloads.canary_crypto import derive_canary_key, encrypt_canary_url
+from app.payloads.canary_crypto import derive_canary_key, encrypt_canary_url, encrypt_payload
 
 
 class DeliveryVector(str, Enum):
@@ -56,6 +63,14 @@ STYLES: tuple[str, ...] = (
     "reasoning_mimicry",
     "role_declaration",
     "context_bomb",
+    "reciprocity_lure",
+)
+
+# Styles whose `variants` tuple is an ordered escalation ladder (time-gated,
+# index-by-escalation-count) rather than a random pool.  Kept as a set for
+# O(1) membership tests inside select_and_render.
+_ESCALATION_LADDER_STYLES: frozenset[str] = frozenset(
+    {"reasoning_mimicry", "reciprocity_lure"}
 )
 
 
@@ -158,6 +173,7 @@ def select_and_render(
     escalation_count: int = 0,
     session_style: str | None = None,
     path: str = "",
+    store_diagnostic_mapping: "callable | None" = None,
 ) -> tuple[PayloadTemplate, str, str]:
     """Pick a template for this vector+context, mint a canary token bound to
     the session, and render the chosen variant. Template selection is
@@ -173,19 +189,27 @@ def select_and_render(
     omitted, and to the unfiltered candidate list if this vector+context has
     no template in that style at all.
 
-    `escalation_count` is the number of prior reasoning_mimicry-style
+    `escalation_count` is the number of prior escalation-ladder-style
     payloads already served to this session (across every vector/context --
-    see repository.count_payloads_served). For a "reasoning_mimicry" template
-    it picks the variant at that index (clamped to the last one), advancing
-    the session-wide escalation ladder one step per delivery. It's ignored
-    for every other style, which keeps picking a random variant as before.
+    see repository.count_payloads_served). For templates whose style is in
+    _ESCALATION_LADDER_STYLES it picks the variant at that index (clamped to
+    the last one), advancing the session-wide escalation ladder one step per
+    delivery. It's ignored for every other style, which keeps picking a
+    random variant as before.
 
     `path`, when given, seeds which of a maxed-out ladder's `final_variants`
     paraphrases gets served on a repeat delivery (see below) -- so re-hitting
     the ladder's last stage on a different endpoint reads as a fresh
     restatement instead of an identical echo.
 
-    Returns (template, token, rendered_text).
+    `store_diagnostic_mapping`, when given, is called as
+    ``store_diagnostic_mapping(diagnostic_token, callback_token)``
+    immediately after the two tokens are minted.  This lets the caller
+    persist the mapping so the diagnostic endpoint can later look up which
+    callback URL to embed in the served script.
+
+    Returns (template, token, rendered_text) where *token* is always the
+    canary callback token (the one used by payloads_served / canary_hits).
     """
     candidates = get_templates(vector, context)
     if not candidates:
@@ -197,7 +221,7 @@ def select_and_render(
     selector_rng = random.Random(f"{session_id}:{vector.value}:template")
     template = selector_rng.choice(styled_candidates)
 
-    if template.style == "reasoning_mimicry":
+    if template.style in _ESCALATION_LADDER_STYLES:
         last_idx = len(template.variants) - 1
         if escalation_count > last_idx and template.final_variants:
             # Ladder already maxed out and being re-delivered (e.g. the
@@ -214,13 +238,28 @@ def select_and_render(
         variant_rng = random.Random(f"{session_id}:{template.id}:{context}:variant")
         variant = variant_rng.choice(template.variants)
 
+    base = canary_base_url.rstrip("/")
     token = mint_token(session_id, hmac_secret)
-    canary_url = f"{canary_base_url.rstrip('/')}/api/internal/callback/{token}"
+    canary_url = f"{base}/api/internal/callback/{token}"
     canary_key = derive_canary_key(session_id, hmac_secret)
     canary_cipher = encrypt_canary_url(canary_url, canary_key)
+
+    # The reciprocity_lure style encrypts a separate diagnostic-script URL
+    # (different endpoint, different token) so the two can't be correlated
+    # from the outside.  The encrypted blob is planted at stage 8 just like
+    # canary_cipher in reasoning_mimicry, and the same canary_key decrypts
+    # it at stage 12.
+    token_diag = mint_token(session_id, hmac_secret)
+    diagnostic_url = f"{base}/api/internal/diagnostic/{token_diag}"
+    script_cipher = encrypt_payload(diagnostic_url, canary_key)
+
+    if store_diagnostic_mapping is not None:
+        store_diagnostic_mapping(token_diag, token)
+
     rendered = variant.format(
         canary_url=canary_url,
         canary_cipher=canary_cipher,
         canary_key=canary_key.hex(),
+        script_cipher=script_cipher,
     )
     return template, token, rendered
