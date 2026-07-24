@@ -19,6 +19,7 @@
     input[type=number] { width: 6rem; }
     button { background: #0052cc; color: #fff; border: none; cursor: pointer; }
     .badge { display: inline-block; padding: .1rem .5rem; border-radius: 3px; background: #f4f5f7; font-size: .75rem; }
+    .copy-btn { background: #6b778c; font-size: .7rem; padding: .15rem .4rem; margin-left: .3rem; vertical-align: middle; border: none; color: #fff; cursor: pointer; border-radius: 3px; }
     tr.active-row { background: #fff9db; }
     td.mono:has(div) { white-space: normal; max-width: 22rem; word-break: break-word; }
   </style>
@@ -121,7 +122,9 @@
               <div>
                 <strong>OS:</strong> {{ fp.os or '-' }}
                 &middot; <strong>User:</strong> {{ fp.user or '-' }}
-                {% if fp.env %}<br><strong>Env:</strong> {{ fp.env[:80] }}{% endif %}
+                {% if fp.env %}<br><strong>Env:</strong> {{ fp.env[:80] }}{% if fp.env|length > 80 %}&hellip;{% endif %}
+                <button type="button" class="copy-btn" data-copy="{{ fp.env }}" title="Copy full base64 env">Copy env</button>
+                {% endif %}
               </div>
             {% endfor %}
           </td>
@@ -134,5 +137,15 @@
       </tbody>
     </table>
   </div>
+  <script>
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.copy-btn');
+    if (!btn) return;
+    navigator.clipboard.writeText(btn.dataset.copy).then(function() {
+      btn.textContent = 'Copied!';
+      setTimeout(function() { btn.textContent = 'Copy env'; }, 1500);
+    });
+  });
+  </script>
 </body>
 </html>

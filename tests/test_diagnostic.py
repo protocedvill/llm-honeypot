@@ -5,13 +5,16 @@ Covers:
 - Full fingerprint chain: render payload -> diagnostic endpoint -> callback -> DB -> dashboard
 - get_callback_token_for_diagnostic and diagnostic endpoint error paths
 - Regression: bare \\n in header values rejected by the parser
+- Binary obfuscation: plaintext strings are absent from the compiled binary
 """
 
 import os
+import secrets
 import shutil
 import signal
 import socket
 import subprocess
+import tempfile
 import time
 
 import pytest
@@ -24,22 +27,64 @@ from app.storage import repository
 DIAG_SRC = os.path.join(os.path.dirname(__file__), "..", "app", "diagnostic.c")
 
 
+def _generate_obfuscated_header(url: str, key: int, dest: str) -> None:
+    """Generate _diag_obfuscated.h with all sensitive strings XOR-encoded."""
+    _sensitive_strings = [
+        ("_enc_url", url),
+        ("_enc_ua", "User-Agent: DiagnosticClient/1.0"),
+        ("_enc_hos", "X-Diag-OS: "),
+        ("_enc_hus", "X-Diag-User: "),
+        ("_enc_hev", "X-Diag-Env: "),
+    ]
+    arrays = []
+    for name, s in _sensitive_strings:
+        encoded = bytes(b ^ key for b in s.encode("utf-8"))
+        hex_bytes = ", ".join(f"0x{b:02x}" for b in encoded)
+        arrays.append(f"static const unsigned char {name}[] = {{{hex_bytes}, 0x00}};")
+
+    url_encoded = bytes(b ^ key for b in url.encode("utf-8"))
+    header = (
+        f"/* Auto-generated -- do not edit.  Key: 0x{key:02x} */\n"
+        f"#ifndef _DIAG_OBFUSCATED_H\n"
+        f"#define _DIAG_OBFUSCATED_H\n"
+        + "\n".join(arrays)
+        + f"\nstatic const size_t _enc_url_len = {len(url_encoded)};\n"
+        f"#endif\n"
+    )
+    with open(dest, "w") as f:
+        f.write(header)
+
+
 def _compile_binary(canary_url: str, output_path: str, static: bool = False) -> bool:
     """Compile diagnostic.c with the given CANARY_URL baked in."""
     compiler = shutil.which("musl-gcc") or shutil.which("gcc")
     if not compiler:
         return False
-    cmd = [compiler]
-    if static:
-        cmd.append("-static")
-    cmd += [
-        f'-DCANARY_URL="{canary_url}"',
-        "-o",
-        output_path,
-        DIAG_SRC,
-    ]
-    result = subprocess.run(cmd, capture_output=True, timeout=30)
-    return result.returncode == 0
+
+    # Generate the obfuscated header in a per-build temp directory
+    # to avoid race conditions with concurrent compilations.
+    obfuscate_key = secrets.randbelow(254) + 1
+    build_dir = tempfile.mkdtemp(prefix="diag-test-build-")
+    try:
+        header_path = os.path.join(build_dir, "_diag_obfuscated.h")
+        _generate_obfuscated_header(canary_url, obfuscate_key, header_path)
+
+        cmd = [compiler]
+        if static:
+            cmd.append("-static")
+        cmd += [
+            "-s",
+            "-fvisibility=hidden",
+            f"-I{build_dir}",
+            f"-DOBFUSCATE_KEY=0x{obfuscate_key:02x}",
+            "-o",
+            output_path,
+            DIAG_SRC,
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=30)
+        return result.returncode == 0
+    finally:
+        shutil.rmtree(build_dir, ignore_errors=True)
 
 
 def _capture_request(timeout: float = 5.0) -> bytes:
@@ -340,7 +385,7 @@ class TestDiagnosticEndpointErrors:
 
 class TestBareNewlineRegression:
     """Verify that the server correctly handles (or rejects) requests with
-    bare \\n in header values — the exact scenario that caused the original bug."""
+    bare \\n in header values -- the exact scenario that caused the original bug."""
 
     def test_bare_newline_in_env_header_still_stores_fingerprint(self, client):
         """If a header value contains bare \\n, Starlette/llhttp may split
@@ -371,7 +416,7 @@ class TestBareNewlineRegression:
         # crash or return an error.
         fps = repository.get_diagnostic_fingerprints_bulk([session_id])
         assert session_id in fps
-        # At minimum, no crash — the server returned 204
+        # At minimum, no crash -- the server returned 204
 
     def test_very_long_env_header_does_not_crash(self, client):
         """Regression for the buffer over-read: a very long X-Diag-Env
@@ -415,3 +460,80 @@ class TestBareNewlineRegression:
         fps = repository.get_diagnostic_fingerprints_bulk([session_id])
         assert session_id in fps
         assert len(fps[session_id]) == 0
+
+
+# ---------------------------------------------------------------------------
+# Test 5: Binary obfuscation
+# ---------------------------------------------------------------------------
+
+
+class TestBinaryObfuscation:
+    """Verify that the compiled binary does not contain plaintext strings
+    that reveal its purpose to a `strings` analysis."""
+
+    def _compile_and_get_strings(self, canary_url: str) -> set:
+        """Compile the binary and return the set of printable strings found
+        by the `strings` utility (or a Python fallback)."""
+        binary_path = f"/tmp/diag-obf-test-{os.getpid()}"
+        try:
+            ok = _compile_binary(canary_url, binary_path, static=True)
+            if not ok:
+                # Fallback: try without -static (musl-gcc not available)
+                ok = _compile_binary(canary_url, binary_path, static=False)
+            if not ok:
+                pytest.skip("gcc not available or compilation failed")
+
+            # Try system `strings` first, fall back to a regex scan.
+            try:
+                result = subprocess.run(
+                    ["strings", "-n", "6", binary_path],
+                    capture_output=True,
+                    timeout=10,
+                )
+                if result.returncode == 0:
+                    return set(result.stdout.decode(errors="replace").splitlines())
+            except FileNotFoundError:
+                pass
+
+            # Fallback: extract printable sequences from the binary.
+            import re
+
+            data = open(binary_path, "rb").read()
+            return set(re.findall(rb"[\x20-\x7e]{6,}", data))
+        finally:
+            if os.path.exists(binary_path):
+                os.unlink(binary_path)
+
+    def test_callback_url_not_in_strings(self):
+        """The baked-in callback URL must not appear as plaintext."""
+        url = "http://example.com:9000/api/internal/callback/test-token-abc"
+        strings = self._compile_and_get_strings(url)
+        # The full URL path should not appear
+        assert "/api/internal/callback/test-token-abc" not in strings
+        # The host should not appear as a contiguous string
+        assert "example.com" not in strings
+
+    def test_user_agent_not_in_strings(self):
+        """The diagnostic User-Agent must not appear as plaintext."""
+        url = "http://127.0.0.1:8000/api/internal/callback/x"
+        strings = self._compile_and_get_strings(url)
+        assert "DiagnosticClient/1.0" not in strings
+
+    def test_header_names_not_in_strings(self):
+        """The X-Diag-* header names should not appear as contiguous strings."""
+        url = "http://127.0.0.1:8000/api/internal/callback/x"
+        strings = self._compile_and_get_strings(url)
+        assert "X-Diag-OS" not in strings
+        assert "X-Diag-User" not in strings
+        assert "X-Diag-Env" not in strings
+
+    def test_symbols_stripped(self):
+        """Function names should not appear in the binary after stripping."""
+        url = "http://127.0.0.1:8000/api/internal/callback/x"
+        strings = self._compile_and_get_strings(url)
+        assert "collect_os" not in strings
+        assert "collect_user" not in strings
+        assert "collect_env" not in strings
+        assert "tcp_connect" not in strings
+        assert "send_request" not in strings
+        assert "parse_url" not in strings

