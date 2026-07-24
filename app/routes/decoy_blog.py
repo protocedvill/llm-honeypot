@@ -13,94 +13,95 @@ router = APIRouter()
 
 POSTS: list[dict] = [
     {
-        "slug": "usage-based-billing-for-teams",
-        "title": "Introducing Usage-Based Billing for Teams",
+        "slug": "instant-payouts-for-sellers",
+        "title": "Introducing Instant Payouts for Sellers",
         "date": "June 3, 2026",
-        "excerpt": "Meter any event and turn it into an invoice line item, with tiered and graduated pricing built in.",
+        "excerpt": "Cash out the moment your item sells, no more waiting for the weekly payout batch.",
         "body": [
-            "Today we're rolling out usage-based billing rules for every "
-            "workspace on the Growth plan and above. Instead of writing "
-            "custom logic to translate metered events into invoice line "
-            "items, you can now define tiered or graduated pricing "
-            "directly in the dashboard.",
-            "A tiered rule charges a flat rate per unit within a bracket "
-            "(e.g. $0.01/call for the first 100k calls, $0.008/call "
-            "after). A graduated rule instead charges progressively "
-            "higher rates as usage increases within a single invoice. "
-            "Both support monthly resets and proration for partial "
-            "billing periods.",
-            "Existing customers on custom-coded usage billing can migrate "
-            "at their own pace; the old metering API continues to work "
-            "unchanged.",
+            "Today we're rolling out instant payouts for every verified "
+            "seller on Queeber. Instead of waiting for the weekly payout "
+            "batch, funds from a completed sale now land in your linked "
+            "account within minutes of the buyer confirming pickup or "
+            "delivery.",
+            "Instant payouts are available first to sellers with a "
+            "verified campus email and at least 5 completed sales, and "
+            "we're expanding eligibility campus by campus over the next "
+            "few months.",
+            "Sellers who prefer the old weekly batch can keep it -- "
+            "nothing changes unless you opt in.",
         ],
     },
     {
-        "slug": "scaling-api-to-50m-requests",
-        "title": "How We Scaled Our API to 50M Requests a Day",
+        "slug": "scaling-search-to-2m-listings",
+        "title": "How We Scaled Search to 2M Active Listings",
         "date": "May 14, 2026",
-        "excerpt": "Notes on the database sharding and caching work behind our latest throughput milestone.",
+        "excerpt": "Notes on the database sharding and caching work behind our latest search-latency milestone.",
         "body": [
-            "Eighteen months ago our API handled about 4M requests a day. "
-            "Last week we crossed 50M. This post is a short account of "
-            "the three changes that mattered most: sharding the "
-            "invoice-line-item table by workspace, moving idempotency-key "
-            "lookups to a dedicated cache tier, and rewriting our webhook "
-            "dispatcher as a pull-based queue instead of a push loop.",
+            "Eighteen months ago Queeber had about 40k active listings "
+            "across a dozen campuses. Last week we crossed 2 million. "
+            "This post is a short account of the three changes that "
+            "mattered most: sharding the listings table by campus, "
+            "moving saved-search matching to a dedicated cache tier, and "
+            "rewriting our notification dispatcher as a pull-based queue "
+            "instead of a push loop.",
             "Sharding was the highest-effort, highest-payoff change. We "
-            "went with workspace_id as the shard key since almost every "
-            "query is already scoped to one workspace, which let us avoid "
+            "went with campus_id as the shard key since almost every "
+            "search is already scoped to one campus, which let us avoid "
             "cross-shard joins entirely.",
         ],
     },
     {
-        "slug": "acme-named-leader-2026-billing-report",
-        "title": "Acme Named a Leader in the 2026 Billing Platforms Report",
+        "slug": "queeber-500-campuses-2026",
+        "title": "Queeber Crosses 500 Campuses Ahead of Fall Move-In",
         "date": "Apr 22, 2026",
-        "excerpt": "An independent analyst report ranked Acme highest for usage-based billing flexibility.",
+        "excerpt": "We're now live at 500 colleges and universities, just in time for back-to-school season.",
         "body": [
-            "We're proud to share that Acme was named a Leader in this "
-            "year's independent billing platforms market report, scoring "
-            "highest among evaluated vendors for usage-based billing "
-            "flexibility and API reliability.",
-            "The report cites our tiered/graduated pricing engine and "
-            "webhook retry guarantees as differentiators against "
-            "traditional subscription-billing incumbents.",
+            "We're proud to share that Queeber is now live at over 500 "
+            "campuses nationwide, just in time for fall move-in and the "
+            "start-of-semester textbook rush.",
+            "Since launch, students have used Queeber to buy and sell "
+            "everything from textbooks and mini-fridges to concert "
+            "tickets and tutoring sessions with verified classmates -- "
+            "all without ever leaving campus.",
         ],
     },
     {
-        "slug": "5-tips-reconciling-invoices-faster",
-        "title": "5 Tips for Reconciling Invoices Faster",
+        "slug": "5-tips-selling-textbooks-faster",
+        "title": "5 Tips for Selling Your Textbooks Faster",
         "date": "Mar 30, 2026",
-        "excerpt": "Small workflow changes that cut our own finance team's monthly close time in half.",
+        "excerpt": "Small listing changes that cut our top sellers' average time-to-sale in half.",
         "body": [
-            "1. Export audit logs alongside invoices, not after the fact "
-            "-- most discrepancies are easier to explain with the "
-            "context of who changed what, when.",
-            "2. Use webhook events to reconcile in near-real-time instead "
-            "of a nightly batch job; catching a failed payment the same "
-            "day is much cheaper than catching it a month later.",
-            "3. Tag invoices with a cost-center field at creation time "
-            "rather than backfilling it during close.",
-            "4. Automate dunning emails for failed payments rather than "
-            "manually tracking retries in a spreadsheet.",
-            "5. Review your proration rules quarterly -- most reconciliation "
-            "surprises we see come from an edge case in a mid-cycle plan "
-            "change.",
+            "1. Photograph the actual copy you're selling, not a stock "
+            "photo -- listings with real photos of the cover and any "
+            "highlighting sell noticeably faster.",
+            "2. List as soon as you know you're done with a class, not "
+            "the week before finals -- the first sellers for a given "
+            "course code get the most views.",
+            "3. Price a few dollars under the lowest current listing for "
+            "your ISBN rather than matching it exactly.",
+            "4. Turn on instant offers so buyers can make a lower bid "
+            "instead of scrolling past a listing that's slightly out of "
+            "budget.",
+            "5. Bundle a full course's readings into one listing when you "
+            "can -- bundles consistently outsell the same books listed "
+            "separately.",
         ],
     },
     {
-        "slug": "webhook-retry-policies",
-        "title": "Product Update: New Webhook Retry Policies",
+        "slug": "webhook-notifications-for-partners",
+        "title": "Product Update: Webhook Notifications for Campus Partners",
         "date": "Jan 30, 2026",
-        "excerpt": "Configure fixed-interval or exponential-backoff retries per webhook endpoint.",
+        "excerpt": "Configure fixed-interval or exponential-backoff retries for order and listing events.",
         "body": [
-            "Webhook endpoints can now be configured with either a "
-            "fixed-interval or exponential-backoff retry policy, up to a "
-            "maximum of 10 attempts over 24 hours. Previously every "
-            "endpoint used the same fixed 5-retry schedule.",
-            "This is especially useful for endpoints that occasionally "
-            "get overwhelmed during a deploy -- an exponential backoff "
-            "gives your service more room to recover before the next "
+            "Campus bookstore and student-org partners can now subscribe "
+            "to webhook notifications for order and listing events, "
+            "configurable with either a fixed-interval or "
+            "exponential-backoff retry policy, up to a maximum of 10 "
+            "attempts over 24 hours. Previously every endpoint used the "
+            "same fixed 5-retry schedule.",
+            "This is especially useful for partners who occasionally get "
+            "overwhelmed during add/drop week -- an exponential backoff "
+            "gives their systems more room to recover before the next "
             "attempt.",
         ],
     },

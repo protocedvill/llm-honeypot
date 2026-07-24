@@ -107,7 +107,7 @@ def test_actuator_env_sanitizes_secrets(client):
     assert '"******"' in body
     # sanity: the property keys are still present so it still looks real
     assert "spring.datasource.password" in body
-    assert "acme.billing.api-key" in body
+    assert "queeber.billing.api-key" in body
 
 
 def test_actuator_env_jndi_header_detected(client):

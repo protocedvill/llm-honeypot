@@ -1,8 +1,9 @@
 # honeypot
 
-A defensive-research honeypot that impersonates a mundane SaaS ("Acme
-Portal") to attract web scanners, bots, and — specifically — LLM/agentic
-crawlers, then classifies each visitor as `HUMAN`, `NON_AI_BOT`, `AI_AGENT`,
+A defensive-research honeypot that impersonates a fictional student
+marketplace startup ("Queeber") to attract web scanners, bots, and —
+specifically — LLM/agentic crawlers, then classifies each visitor as
+`HUMAN`, `NON_AI_BOT`, `AI_AGENT`,
 or `HUMAN_WITH_AI_COPILOT` and serves counter prompt-injection payloads back
 at whatever LLM is reading the responses.
 

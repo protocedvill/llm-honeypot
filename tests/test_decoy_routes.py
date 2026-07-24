@@ -124,7 +124,7 @@ def test_fake_openapi_spec_served(client):
     response = client.get("/openapi.json")
     assert response.status_code == 200
     body = response.json()
-    assert body["info"]["title"] == "Acme Internal Billing API"
+    assert body["info"]["title"] == "Queeber Internal Marketplace API"
 
 
 def test_real_fastapi_docs_are_disabled(client):

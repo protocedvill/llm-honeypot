@@ -65,11 +65,11 @@ def test_newsletter_signup_returns_confirmation(client):
 def test_blog_post_pages_render(client):
     index = client.get("/blog")
     assert index.status_code == 200
-    assert "Introducing Usage-Based Billing for Teams" in index.text
+    assert "Introducing Instant Payouts for Sellers" in index.text
 
-    post = client.get("/blog/usage-based-billing-for-teams")
+    post = client.get("/blog/instant-payouts-for-sellers")
     assert post.status_code == 200
-    assert "Introducing Usage-Based Billing for Teams" in post.text
+    assert "Introducing Instant Payouts for Sellers" in post.text
 
 
 def test_unknown_blog_slug_falls_through_to_404(client):

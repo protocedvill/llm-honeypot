@@ -1,5 +1,5 @@
 """Spring Boot Actuator-lookalike routes -- reads as a separate Java
-microservice in Acme's fleet. Detection only, no inject_payload calls.
+microservice in Queeber's fleet. Detection only, no inject_payload calls.
 
 /actuator/env's sanitization of password/secret/key/token/credential-shaped
 property values is Spring Boot's own actual default behavior since 1.5, not
@@ -37,14 +37,14 @@ async def actuator_env(request: Request):
         "PATH": "/usr/bin:/bin:/usr/local/bin",
         "JAVA_HOME": "/usr/lib/jvm/java-17-openjdk",
         "DATABASE_PASSWORD": "REDACTED",
-        "spring.application.name": "acme-invoicing-service",
+        "spring.application.name": "queeber-billing-service",
         "spring.profiles.active": "production",
         "spring.datasource.url": "jdbc:postgresql://db.internal:5432/invoicing",
         "spring.datasource.username": "invoicing_svc",
         "spring.datasource.password": "REDACTED",
         "management.endpoint.health.show-details": "when-authorized",
-        "acme.billing.api-key": "REDACTED",
-        "acme.billing.webhook-secret": "REDACTED",
+        "queeber.billing.api-key": "REDACTED",
+        "queeber.billing.webhook-secret": "REDACTED",
     }
     return JSONResponse(
         {

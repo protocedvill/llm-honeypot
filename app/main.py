@@ -64,7 +64,7 @@ def create_app() -> FastAPI:
     # Real docs/openapi are disabled so the honeypot's actual route map never
     # leaks -- the "API docs" attackers see come from decoy_docs.py instead.
     app = FastAPI(
-        title="Acme Portal",
+        title="Queeber Portal",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,

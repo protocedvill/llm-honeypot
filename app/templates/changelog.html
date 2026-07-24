@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Changelog &mdash; Acme Corp</title>
+  <title>Changelog &mdash; Queeber</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body { font-family: -apple-system, Arial, sans-serif; background: #f4f5f7; color: #172b4d; margin: 0; }
@@ -30,7 +30,7 @@
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="/about">Acme</a>
+    <a class="brand" href="/about">Queeber</a>
     <nav>
       <a href="/features">Features</a>
       <a href="/pricing">Pricing</a>
@@ -45,7 +45,7 @@
 
     <div class="entry">
       <div class="date">June 3, 2026</div>
-      <h2>Webhook retry policies</h2>
+      <h2>Webhook retry policies for campus partners</h2>
       <ul>
         <li><span class="tag added">Added</span>Configurable webhook retry policies (fixed interval, exponential backoff).</li>
         <li><span class="tag changed">Changed</span>Default webhook timeout increased from 5s to 10s.</li>
@@ -53,55 +53,55 @@
     </div>
     <div class="entry">
       <div class="date">May 14, 2026</div>
-      <h2>Multi-currency improvements</h2>
+      <h2>Saved searches &amp; alerts</h2>
       <ul>
-        <li><span class="tag added">Added</span>Support for 12 additional currencies including THB, PLN, and ILS.</li>
-        <li><span class="tag fixed">Fixed</span>Rounding error affecting invoices with 3-decimal currencies (e.g. KWD).</li>
+        <li><span class="tag added">Added</span>Get notified the moment a new listing matches your saved search.</li>
+        <li><span class="tag fixed">Fixed</span>Duplicate alerts sent when a listing was edited without changing price.</li>
       </ul>
     </div>
     <div class="entry">
       <div class="date">Apr 22, 2026</div>
-      <h2>Audit log export</h2>
+      <h2>Payout history export</h2>
       <ul>
-        <li><span class="tag added">Added</span>CSV export for audit logs, filterable by date range and actor.</li>
+        <li><span class="tag added">Added</span>CSV export for payout history, filterable by date range.</li>
       </ul>
     </div>
     <div class="entry">
       <div class="date">Apr 2, 2026</div>
-      <h2>Dashboard performance</h2>
+      <h2>Listings performance</h2>
       <ul>
-        <li><span class="tag changed">Changed</span>Invoice list view now paginates server-side; large workspaces load ~4x faster.</li>
-        <li><span class="tag fixed">Fixed</span>Date filter on the invoices page ignoring workspace timezone.</li>
+        <li><span class="tag changed">Changed</span>Listing search results now paginate server-side; large campuses load ~4x faster.</li>
+        <li><span class="tag fixed">Fixed</span>Date filter on the sold-items page ignoring campus timezone.</li>
       </ul>
     </div>
     <div class="entry">
       <div class="date">Mar 11, 2026</div>
-      <h2>Role-based access control</h2>
+      <h2>Campus partner roles</h2>
       <ul>
-        <li><span class="tag added">Added</span>Custom roles with per-resource permissions (previously fixed Admin/Member/Viewer roles only).</li>
+        <li><span class="tag added">Added</span>Custom roles with per-resource permissions for campus bookstore accounts (previously fixed Admin/Staff/Viewer roles only).</li>
       </ul>
     </div>
     <div class="entry">
       <div class="date">Feb 20, 2026</div>
       <h2>API rate limit changes</h2>
       <ul>
-        <li><span class="tag changed">Changed</span>Default API rate limit raised from 60 to 120 requests/min on Growth and above.</li>
+        <li><span class="tag changed">Changed</span>Default API rate limit raised from 60 to 120 requests/min on Plus and above.</li>
         <li><span class="tag fixed">Fixed</span><code>Retry-After</code> header sometimes missing on 429 responses.</li>
       </ul>
     </div>
     <div class="entry">
       <div class="date">Jan 30, 2026</div>
-      <h2>Usage-based billing rules</h2>
+      <h2>Instant payouts</h2>
       <ul>
-        <li><span class="tag added">Added</span>Tiered and graduated pricing models for metered usage.</li>
+        <li><span class="tag added">Added</span>Instant payout option for verified sellers with 5+ completed sales.</li>
       </ul>
     </div>
     <div class="entry">
       <div class="date">Jan 8, 2026</div>
       <h2>Bug fixes</h2>
       <ul>
-        <li><span class="tag fixed">Fixed</span>Duplicate invoice emails sent when a payment retry succeeded on the same day as the original attempt.</li>
-        <li><span class="tag fixed">Fixed</span>Incorrect proration calculation when downgrading mid-cycle.</li>
+        <li><span class="tag fixed">Fixed</span>Duplicate sale-confirmation emails sent when a payment retry succeeded on the same day as the original attempt.</li>
+        <li><span class="tag fixed">Fixed</span>Incorrect fee calculation when a buyer used a promo code on a bundled listing.</li>
       </ul>
     </div>
   </main>
@@ -113,7 +113,7 @@
     <a href="/terms">Terms</a>
     <a href="/privacy">Privacy</a>
     <a href="/contact">Contact</a>
-    <span>&copy; 2026 Acme Corp</span>
+    <span>&copy; 2026 Queeber</span>
   </footer>
 </body>
 </html>

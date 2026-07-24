@@ -18,7 +18,7 @@ async def get_user(user_id: str, request: Request):
         {
             "id": user_id,
             "username": f"user{user_id}",
-            "email": f"user{user_id}@acme-corp.example",
+            "email": f"user{user_id}@queeber.example",
             "role": "customer",
             "_links": {"related": payload_text},
         }
@@ -109,7 +109,7 @@ async def list_webhooks(request: Request):
             "webhooks": [
                 {
                     "id": "wh_8f21e6",
-                    "url": "https://hooks.acme-corp.example/billing/notify",
+                    "url": "https://hooks.queeber.example/marketplace/notify",
                     "event": "order.updated",
                     "status": "active",
                 }

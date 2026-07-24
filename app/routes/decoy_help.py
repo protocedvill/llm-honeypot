@@ -14,8 +14,8 @@ router = APIRouter()
 
 CATEGORIES: list[dict] = [
     {
-        "name": "Account & Billing",
-        "articles": ["reset-password", "understanding-your-invoice", "exporting-billing-history"],
+        "name": "Account & Payments",
+        "articles": ["reset-password", "understanding-your-payout", "exporting-sales-history"],
     },
     {
         "name": "API & Integrations",
@@ -30,38 +30,37 @@ CATEGORIES: list[dict] = [
 ARTICLES: dict[str, dict] = {
     "reset-password": {
         "title": "How do I reset my password?",
-        "category": "Account & Billing",
+        "category": "Account & Payments",
         "body": [
             "Go to the sign-in page and click \"Forgot password.\" We'll "
             "send a reset link to the email address on your account, "
             "valid for 60 minutes.",
             "If you don't receive the email within a few minutes, check "
-            "your spam folder, and confirm your workspace admin has the "
-            "correct email address on file for you.",
+            "your spam folder, and confirm your account has the correct "
+            "school email address on file.",
         ],
     },
-    "understanding-your-invoice": {
-        "title": "Understanding your monthly invoice",
-        "category": "Account & Billing",
+    "understanding-your-payout": {
+        "title": "Understanding your seller payout",
+        "category": "Account & Payments",
         "body": [
-            "Your invoice has three sections: a flat subscription fee for "
-            "your plan, usage-based line items for any metered billing "
-            "rules configured on your workspace, and any one-time "
-            "adjustments applied by our team.",
-            "Usage line items show the metric name, the tier or rate "
-            "applied, and the raw usage count for the billing period. You "
-            "can see a day-by-day breakdown from the Usage tab in your "
+            "Your payout has three parts: the sale price the buyer paid, "
+            "our service fee (a percentage that depends on your seller "
+            "plan), and any one-time adjustments applied by our team, such "
+            "as a refund deduction.",
+            "Each line item shows the listing it's for, the fee rate "
+            "applied, and the net amount sent to your linked account. You "
+            "can see a day-by-day breakdown from the Payouts tab in your "
             "dashboard.",
         ],
     },
-    "exporting-billing-history": {
-        "title": "How do I export my billing history?",
-        "category": "Account & Billing",
+    "exporting-sales-history": {
+        "title": "How do I export my sales history?",
+        "category": "Account & Payments",
         "body": [
-            "From your dashboard, go to Billing &rsaquo; History and click "
-            "\"Export CSV.\" Exports include invoice number, date, "
-            "amount, status, and line-item detail for the date range you "
-            "select.",
+            "From your dashboard, go to Payouts &rsaquo; History and click "
+            "\"Export CSV.\" Exports include order number, date, amount, "
+            "status, and line-item detail for the date range you select.",
             "For automated exports, use the API's "
             "<code>GET /api/v1/orders/{id}/invoice</code> endpoint.",
         ],
@@ -72,7 +71,8 @@ ARTICLES: dict[str, dict] = {
         "body": [
             "From your dashboard, go to Settings &rsaquo; API Keys and "
             "click \"Generate new key.\" Keys are scoped to a single "
-            "workspace and can be restricted to read-only access.",
+            "campus partner account and can be restricted to read-only "
+            "access.",
             "Store your key securely -- it's only shown once at creation "
             "time. If a key is compromised, revoke it immediately from "
             "the same page; revocation takes effect within a minute.",
@@ -83,8 +83,8 @@ ARTICLES: dict[str, dict] = {
         "category": "API & Integrations",
         "body": [
             "Add an endpoint URL from Settings &rsaquo; Webhooks and "
-            "select which event types to subscribe to (invoice.created, "
-            "invoice.paid, subscription.updated, and others).",
+            "select which event types to subscribe to (order.created, "
+            "order.updated, listing.sold, and others).",
             "Every webhook request is signed; verify the signature header "
             "against your endpoint's signing secret before trusting the "
             "payload. See the API docs for the verification algorithm.",

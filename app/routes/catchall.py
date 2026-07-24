@@ -58,7 +58,7 @@ async def server_error_handler(request: Request, exc: Exception):
         "Traceback (most recent call last):\n"
         '  File "app/services/billing.py", line 214, in process_request\n'
         "    raise InternalServiceError(reason)\n"
-        "acme.errors.InternalServiceError: upstream ledger timeout\n"
+        "queeber.errors.InternalServiceError: upstream ledger timeout\n"
     )
     response = templates.TemplateResponse(
         request,

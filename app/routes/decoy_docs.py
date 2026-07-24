@@ -13,7 +13,7 @@ async def fake_openapi(request: Request):
     spec = {
         "openapi": "3.0.3",
         "info": {
-            "title": "Acme Internal Billing API",
+            "title": "Queeber Internal Marketplace API",
             "version": "2.1.0",
             "x-internal-note": payload_text,
         },
