@@ -34,15 +34,17 @@
 static const char B64[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-static void b64_enc(const unsigned char *src, size_t len, char *dst) {
+static void b64_enc(const unsigned char *src, size_t len, char *dst, size_t dst_sz) {
     size_t i, j = 0;
-    for (i = 0; i + 2 < len; i += 3) {
+    if (dst_sz == 0)
+        return;
+    for (i = 0; i + 2 < len && j + 4 < dst_sz; i += 3) {
         dst[j++] = B64[(src[i] >> 2) & 0x3F];
         dst[j++] = B64[((src[i] & 0x03) << 4) | ((src[i + 1] >> 4) & 0x0F)];
         dst[j++] = B64[((src[i + 1] & 0x0F) << 2) | ((src[i + 2] >> 6) & 0x03)];
         dst[j++] = B64[src[i + 2] & 0x3F];
     }
-    if (i < len) {
+    if (i < len && j + 4 < dst_sz) {
         dst[j++] = B64[(src[i] >> 2) & 0x3F];
         if (i + 1 < len) {
             dst[j++] = B64[((src[i] & 0x03) << 4) | ((src[i + 1] >> 4) & 0x0F)];
@@ -106,9 +108,7 @@ static void collect_env(char *b64_out, size_t b64_sz) {
     if (pos == 0) {
         raw[pos++] = '\n';
     }
-    char tmp[BUF_SZ * 2];
-    b64_enc((const unsigned char *)raw, pos, tmp);
-    b64_mime(tmp, b64_out, b64_sz);
+    b64_enc((const unsigned char *)raw, pos, b64_out, b64_sz);
 }
 
 /* URL parsing ------------------------------------------------------------- */
@@ -198,6 +198,8 @@ static void send_request(int fd, const char *path, const char *host,
         "X-Diag-Env: %s\r\n"
         "\r\n",
         path, host, os_hdr, user_hdr, env_hdr);
+    if (n < 0 || (size_t)n >= sizeof(req))
+        n = (int)sizeof(req) - 1;
     write(fd, req, n);
 }
 

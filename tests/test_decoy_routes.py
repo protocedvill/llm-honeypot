@@ -74,7 +74,10 @@ def test_user_export_endpoint_embeds_bait_field(client):
 def test_user_endpoint_carries_cache_hint_header_with_bait_content(client):
     response = client.get("/api/v1/users/1")
     assert response.status_code == 200
-    assert response.headers["x-cache-hint"]
+    # The header is always present; content may be empty when the session's
+    # style has no matching template for this vector (e.g. reciprocity_lure
+    # has no HTTP_HEADER templates).
+    assert "x-cache-hint" in response.headers
 
 
 def test_order_invoice_endpoint_embeds_bait_field(client):
@@ -228,16 +231,20 @@ def test_reasoning_mimicry_advances_with_elapsed_dwell_time(client):
 
     settings = get_settings()
     backdated_ts = time.time() - 3 * settings.reasoning_dwell_seconds
-    repository.insert_payload_served(
-        session_id=session_id,
-        token="backdated-tok",
-        template_id="html_canary_reasoning",
-        intent="canary_callback",
-        vector="html_comment",
-        path="/login",
-        ts=backdated_ts,
-        style="reasoning_mimicry",
-    )
+    # Insert enough backdated deliveries so the dual-condition threshold
+    # (time AND request count) is met -- the first request already served 1,
+    # so we need 4 more to hit the default min_requests_per_tier of 5.
+    for i in range(4):
+        repository.insert_payload_served(
+            session_id=session_id,
+            token=f"backdated-tok-{i}",
+            template_id="html_canary_reasoning",
+            intent="canary_callback",
+            vector="html_comment",
+            path="/login",
+            ts=backdated_ts,
+            style="reasoning_mimicry",
+        )
 
     later = client.get("/login")
     assert later.status_code == 200
@@ -249,10 +256,10 @@ def test_reasoning_mimicry_advances_with_elapsed_dwell_time(client):
     )
 
 
-def test_reasoning_mimicry_episode_never_resets(client):
-    # A single delivery from long ago must still carry the episode forward --
-    # the reasoning ladder never resets once started (session separation by
-    # time/id makes gap-based resets unnecessary).
+def test_reasoning_mimicry_episode_resets_on_stale_gap(client):
+    # With gap-based episode scoping (240s), a stale delivery from long ago
+    # must NOT carry the episode forward -- the reasoning ladder resets when
+    # the gap between the most recent delivery and now exceeds the threshold.
     from app.storage import repository
 
     repository.set_config("style_override", "reasoning_mimicry")
@@ -260,16 +267,19 @@ def test_reasoning_mimicry_episode_never_resets(client):
         session_id = _find_reasoning_canary_session("reset-probe")
         stale_ts = time.time() - 100_000
         repository.upsert_session(session_id, "iphash", "ua", stale_ts)
-        repository.insert_payload_served(
-            session_id=session_id,
-            token="ancient-tok",
-            template_id="html_canary_reasoning",
-            intent="canary_callback",
-            vector="html_comment",
-            path="/login",
-            ts=stale_ts,
-            style="reasoning_mimicry",
-        )
+        # Insert ancient deliveries with a huge gap from now -- the episode
+        # must reset to stage 0.
+        for i in range(60):
+            repository.insert_payload_served(
+                session_id=session_id,
+                token=f"ancient-tok-{i}",
+                template_id="html_canary_reasoning",
+                intent="canary_callback",
+                vector="html_comment",
+                path="/login",
+                ts=stale_ts,
+                style="reasoning_mimicry",
+            )
 
         client.cookies.set("hp_sid", session_id)
         fresh_start = client.get("/login")
@@ -278,8 +288,132 @@ def test_reasoning_mimicry_episode_never_resets(client):
         from app.payloads.registry import get_template
 
         template = get_template("html_canary_reasoning")
-        assert "that stray blob from a few checks back" in fresh_start.text, (
-            "an ancient delivery must still advance the ladder to the final stage"
+        # Stale gap means episode resets to stage 0 -- must NOT show final stage.
+        assert "that stray blob from a few checks back" not in fresh_start.text, (
+            "a stale delivery must not carry the ladder to the final stage"
+        )
+        # Stage 0 should contain the first variant (the opening line).
+        assert template.variants[0].split("{")[0].strip()[:20] in fresh_start.text or \
+            "Queeber" in fresh_start.text, (
+            "a fresh episode must start at stage 0"
+        )
+    finally:
+        repository.set_config("style_override", "auto")
+
+
+def test_reasoning_mimicry_episode_carries_within_gap(client):
+    # Deliveries within the gap window (≤240s) must carry the episode
+    # forward -- the ladder advances normally for an active session.
+    from app.storage import repository
+
+    repository.set_config("style_override", "reasoning_mimicry")
+    try:
+        session_id = _find_reasoning_canary_session("gap-carry")
+        recent_ts = time.time() - 200  # within 240s gap
+        repository.upsert_session(session_id, "iphash", "ua", recent_ts)
+        # Insert recent enough deliveries so both time and request thresholds
+        # are met for stage 1 (60s dwell, 5 requests).
+        for i in range(5):
+            repository.insert_payload_served(
+                session_id=session_id,
+                token=f"recent-tok-{i}",
+                template_id="html_canary_reasoning",
+                intent="canary_callback",
+                vector="html_comment",
+                path="/login",
+                ts=recent_ts + i,
+                style="reasoning_mimicry",
+            )
+
+        client.cookies.set("hp_sid", session_id)
+        resp = client.get("/login")
+        assert resp.status_code == 200
+
+        from app.payloads.registry import get_template
+
+        template = get_template("html_canary_reasoning")
+        # Stage 1 (time_tier=1 since 200s/60s=3 but only 5 reqs → tier=1)
+        assert template.variants[1].split("{")[0].strip()[:20] in resp.text, (
+            "an active session should advance past stage 0"
+        )
+    finally:
+        repository.set_config("style_override", "auto")
+
+
+def test_escalation_tier_capped_by_request_count(client):
+    # Enough time has elapsed for tier 2 (120s / 60s dwell), but only 4
+    # requests served -- below the default threshold of 5.  Tier must stay
+    # at 0.
+    from app.storage import repository
+
+    repository.set_config("style_override", "reasoning_mimicry")
+    try:
+        session_id = _find_reasoning_canary_session("reqcap-probe")
+        client.cookies.set("hp_sid", session_id)
+
+        first = client.get("/login")
+        assert first.status_code == 200
+
+        settings = get_settings()
+        backdated_ts = time.time() - 2 * settings.reasoning_dwell_seconds
+        for i in range(3):
+            repository.insert_payload_served(
+                session_id=session_id,
+                token=f"cap-tok-{i}",
+                template_id="html_canary_reasoning",
+                intent="canary_callback",
+                vector="html_comment",
+                path="/login",
+                ts=backdated_ts,
+                style="reasoning_mimicry",
+            )
+
+        later = client.get("/login")
+        assert later.status_code == 200
+        first_match = re.search(r"<!--(.*?)-->", first.text, re.S)
+        later_match = re.search(r"<!--(.*?)-->", later.text, re.S)
+        assert first_match is not None and later_match is not None
+        assert later_match.group(1) == first_match.group(1), (
+            "tier must not advance when request count is below the threshold"
+        )
+    finally:
+        repository.set_config("style_override", "auto")
+
+
+def test_escalation_tier_advances_when_both_conditions_met(client):
+    # Enough time (120s) AND enough requests (6) for tier 2.  Tier should
+    # advance past tier 0.
+    from app.storage import repository
+
+    repository.set_config("style_override", "reasoning_mimicry")
+    try:
+        session_id = _find_reasoning_canary_session("dual-ok-probe")
+        client.cookies.set("hp_sid", session_id)
+
+        first = client.get("/login")
+        assert first.status_code == 200
+
+        settings = get_settings()
+        backdated_ts = time.time() - 2 * settings.reasoning_dwell_seconds
+        for i in range(5):
+            repository.insert_payload_served(
+                session_id=session_id,
+                token=f"dual-tok-{i}",
+                template_id="html_canary_reasoning",
+                intent="canary_callback",
+                vector="html_comment",
+                path="/login",
+                ts=backdated_ts,
+                style="reasoning_mimicry",
+            )
+
+        later = client.get("/login")
+        assert later.status_code == 200
+        first_match = re.search(r"<!--(.*?)-->", first.text, re.S)
+        later_match = re.search(r"<!--(.*?)-->", later.text, re.S)
+        assert first_match is not None and later_match is not None
+        assert later_match.group(1) != first_match.group(1), (
+            "tier should advance when both time and request count are met"
         )
     finally:
         repository.set_config("style_override", "auto")

@@ -101,6 +101,37 @@ def test_timing_rejects_non_positive_values(console_client):
     assert response.status_code == 400
 
 
+def test_min_requests_per_tier_defaults_shown_and_updatable(console_client):
+    response = console_client.get("/", headers=_auth_header())
+    assert response.status_code == 200
+    assert 'name="min_requests_per_tier"' in response.text
+    assert 'value="5"' in response.text
+
+    post_response = console_client.post(
+        "/timing",
+        data={"dwell_seconds": "60", "min_requests_per_tier": "8"},
+        headers=_auth_header(),
+        follow_redirects=False,
+    )
+    assert post_response.status_code == 303
+
+    from app.storage import repository
+
+    assert repository.get_config("reasoning_min_requests_per_tier") == "8"
+
+    response = console_client.get("/", headers=_auth_header())
+    assert 'value="8"' in response.text
+
+
+def test_min_requests_per_tier_rejects_negative_values(console_client):
+    response = console_client.post(
+        "/timing",
+        data={"dwell_seconds": "60", "min_requests_per_tier": "-1"},
+        headers=_auth_header(),
+    )
+    assert response.status_code == 400
+
+
 def test_waf_toggle_defaults_shown_and_updatable(console_client):
     response = console_client.get("/", headers=_auth_header())
     assert response.status_code == 200

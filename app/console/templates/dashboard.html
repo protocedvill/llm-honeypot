@@ -41,6 +41,8 @@
     <form method="post" action="/timing" style="display:flex; gap:.5rem; align-items:center;">
       <label for="dwell_seconds"><strong>Reasoning dwell</strong> (s/stage)</label>
       <input type="number" name="dwell_seconds" id="dwell_seconds" min="1" value="{{ dwell_seconds }}">
+      <label for="min_requests_per_tier"><strong>Min requests</strong> (reqs/stage)</label>
+      <input type="number" name="min_requests_per_tier" id="min_requests_per_tier" min="0" value="{{ min_requests_per_tier }}">
       <button type="submit">Apply</button>
     </form>
 

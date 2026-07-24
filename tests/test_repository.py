@@ -272,6 +272,93 @@ def test_get_reasoning_episode_start_always_returns_earliest(tmp_path):
     assert repository.get_reasoning_episode_start("s1", now=100_000.0) == 1000.0
 
 
+def test_get_reasoning_episode_start_gap_reset(tmp_path):
+    """With reset_gap_seconds=240, a gap >240s between payloads_served
+    resets the episode start to the newer streak."""
+    db_path = str(tmp_path / "repo-test-gap-reset.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    # Old delivery at t=1000, then a huge gap, then a recent streak.
+    repository.insert_payload_served(
+        session_id="s1", token="tok-old", template_id="t1",
+        intent="canary_callback", vector="html_comment",
+        path="/login", ts=1000.0, style="reasoning_mimicry",
+    )
+    for ts in [5000.0, 5030.0, 5060.0]:
+        repository.insert_payload_served(
+            session_id="s1", token=f"tok-{ts}", template_id="t1",
+            intent="canary_callback", vector="html_comment",
+            path="/login", ts=ts, style="reasoning_mimicry",
+        )
+
+    # With gap-based reset, the old t=1000 delivery is isolated (gap > 240s
+    # from the recent streak), so episode_start = 5000.0.
+    assert repository.get_reasoning_episode_start(
+        "s1", now=5100.0, reset_gap_seconds=240,
+    ) == 5000.0
+
+    # But with reset_gap_seconds=0 (disabled), the old delivery carries
+    # forward — episode_start = 1000.0.
+    assert repository.get_reasoning_episode_start(
+        "s1", now=5100.0, reset_gap_seconds=0,
+    ) == 1000.0
+
+
+def test_get_reasoning_episode_start_gap_reset_recent_within_window(tmp_path):
+    """Deliveries within the gap window (≤240s) must carry the episode forward."""
+    db_path = str(tmp_path / "repo-test-gap-carry.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    for ts in [1000.0, 1030.0, 1060.0]:
+        repository.insert_payload_served(
+            session_id="s1", token=f"tok-{ts}", template_id="t1",
+            intent="canary_callback", vector="html_comment",
+            path="/login", ts=ts, style="reasoning_mimicry",
+        )
+
+    # All within 240s gap — episode_start is the earliest.
+    assert repository.get_reasoning_episode_start(
+        "s1", now=1100.0, reset_gap_seconds=240,
+    ) == 1000.0
+
+
+def test_get_reasoning_episode_start_gap_reset_bulk(tmp_path):
+    """Bulk variant must apply gap-based reset per session."""
+    db_path = str(tmp_path / "repo-test-gap-bulk.sqlite")
+    db_module.reset_for_tests(db_path)
+
+    # s1: old delivery + gap + recent streak → resets to recent.
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+    repository.insert_payload_served(
+        session_id="s1", token="tok-old", template_id="t1",
+        intent="canary_callback", vector="html_comment",
+        path="/login", ts=1000.0, style="reasoning_mimicry",
+    )
+    repository.insert_payload_served(
+        session_id="s1", token="tok-new", template_id="t1",
+        intent="canary_callback", vector="html_comment",
+        path="/login", ts=5000.0, style="reasoning_mimicry",
+    )
+
+    # s2: contiguous streak → carries forward.
+    repository.upsert_session("s2", "iphash", "ua", 1000.0)
+    for ts in [4800.0, 4830.0, 4860.0]:
+        repository.insert_payload_served(
+            session_id="s2", token=f"tok2-{ts}", template_id="t1",
+            intent="canary_callback", vector="html_comment",
+            path="/login", ts=ts, style="reasoning_mimicry",
+        )
+
+    result = repository.get_reasoning_episode_starts_bulk(
+        ["s1", "s2"], now=5010.0, style="reasoning_mimicry",
+        reset_gap_seconds=240,
+    )
+    assert result["s1"] == 5000.0  # old gap resets to recent streak
+    assert result["s2"] == 4800.0  # contiguous carries forward
+
+
 def test_get_session_episode_start_none_with_no_activity(tmp_path):
     db_path = str(tmp_path / "repo-test-session-episode-1.sqlite")
     db_module.reset_for_tests(db_path)
@@ -721,3 +808,118 @@ def test_bulk_functions_do_not_leak_data_from_unrequested_sessions(tmp_path):
     assert "bulk-s2" not in repository.get_marker_value_events_bulk(requested)
     assert "bulk-s2" not in repository.count_events_bulk(requested)
     assert "bulk-s2" not in repository.get_reasoning_episode_starts_bulk(requested, now=10_001.0)
+
+
+def test_get_payload_served_count_bulk_filters_by_style(tmp_path):
+    db_path = str(tmp_path / "repo-test.sqlite")
+    db_module.reset_for_tests(db_path)
+
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+    repository.upsert_session("s2", "iphash", "ua", 1000.0)
+    for i in range(3):
+        repository.insert_payload_served(
+            "s1", f"t{i}", "tpl", "cb", "html", "/", 1000.0, style="reasoning_mimicry",
+        )
+    repository.insert_payload_served(
+        "s1", "t-other", "tpl", "cb", "html", "/", 1000.0, style="reciprocity_lure",
+    )
+    repository.insert_payload_served(
+        "s2", "t2-1", "tpl", "cb", "html", "/", 1000.0, style="reasoning_mimicry",
+    )
+
+    counts = repository.get_payload_served_count_bulk(["s1", "s2", "s3"], "reasoning_mimicry")
+    assert counts["s1"] == 3
+    assert counts["s2"] == 1
+    assert counts["s3"] == 0
+
+
+def test_count_payloads_served_since_excludes_stale_episode(tmp_path):
+    """A stale delivery from a prior, gap-reset episode must not inflate the
+    request count used to gate the current episode's escalation tier."""
+    db_path = str(tmp_path / "repo-test-since.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+
+    # An old episode: 3 deliveries around t=1000.
+    for i in range(3):
+        repository.insert_payload_served(
+            "s1", f"old-{i}", "tpl", "cb", "html", "/", 1000.0 + i,
+            style="reasoning_mimicry",
+        )
+    # A fresh episode (after a gap) starting at t=5000: 1 delivery so far.
+    repository.insert_payload_served(
+        "s1", "new-0", "tpl", "cb", "html", "/", 5000.0, style="reasoning_mimicry",
+    )
+
+    # Unscoped (lifetime) count includes the stale episode's deliveries.
+    assert repository.count_payloads_served("s1", style="reasoning_mimicry") == 4
+
+    # Scoped to the fresh episode's start, only the new delivery counts.
+    assert repository.count_payloads_served(
+        "s1", style="reasoning_mimicry", since=5000.0
+    ) == 1
+
+
+def test_get_payload_served_count_bulk_since_excludes_stale_episode(tmp_path):
+    db_path = str(tmp_path / "repo-test-since-bulk.sqlite")
+    db_module.reset_for_tests(db_path)
+    repository.upsert_session("s1", "iphash", "ua", 1000.0)
+    repository.upsert_session("s2", "iphash", "ua", 1000.0)
+
+    for i in range(3):
+        repository.insert_payload_served(
+            "s1", f"old-{i}", "tpl", "cb", "html", "/", 1000.0 + i,
+            style="reasoning_mimicry",
+        )
+    repository.insert_payload_served(
+        "s1", "new-0", "tpl", "cb", "html", "/", 5000.0, style="reasoning_mimicry",
+    )
+    # s2 has no episode_start on record (None) -- since=None means unfiltered.
+    repository.insert_payload_served(
+        "s2", "s2-0", "tpl", "cb", "html", "/", 1000.0, style="reasoning_mimicry",
+    )
+
+    counts = repository.get_payload_served_count_bulk_since(
+        ["s1", "s2", "s3"],
+        "reasoning_mimicry",
+        since={"s1": 5000.0, "s2": None},
+    )
+    assert counts["s1"] == 1
+    assert counts["s2"] == 1
+    assert counts["s3"] == 0
+
+
+def test_escalation_count_from_episode_start_dual_condition(tmp_path):
+    db_path = str(tmp_path / "repo-test.sqlite")
+    db_module.reset_for_tests(db_path)
+
+    # Time alone gives tier 3 (180s / 60s), but only 10 requests served.
+    # With min_requests_per_tier=5, request tier = 10//5 = 2.
+    # Actual tier = min(3, 2) = 2.
+    episode_start = 1000.0
+    now = 1180.0
+    assert repository.escalation_count_from_episode_start(
+        episode_start, 60.0, now, request_count=10, min_requests_per_tier=5,
+    ) == 2
+
+    # Same time, but 15 requests -- request tier = 15//5 = 3.
+    # Actual tier = min(3, 3) = 3.
+    assert repository.escalation_count_from_episode_start(
+        episode_start, 60.0, now, request_count=15, min_requests_per_tier=5,
+    ) == 3
+
+    # Enough requests (20) but not enough time (only 60s = tier 1).
+    # Actual tier = min(1, 4) = 1.
+    assert repository.escalation_count_from_episode_start(
+        episode_start, 60.0, 1060.0, request_count=20, min_requests_per_tier=5,
+    ) == 1
+
+    # min_requests_per_tier=0 disables the cap (backward compat).
+    assert repository.escalation_count_from_episode_start(
+        episode_start, 60.0, now, request_count=0, min_requests_per_tier=0,
+    ) == 3
+
+    # Zero requests with min_requests_per_tier=5 → tier 0.
+    assert repository.escalation_count_from_episode_start(
+        episode_start, 60.0, now, request_count=0, min_requests_per_tier=5,
+    ) == 0

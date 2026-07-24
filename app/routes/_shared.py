@@ -10,6 +10,8 @@ from app.storage import repository
 
 templates = Jinja2Templates(directory="app/templates")
 
+_EPISODE_SCOPING_GAP_SECONDS = 240
+
 
 def header_safe(text: str) -> str:
     """HTTP header values must be Latin-1 (RFC 7230) -- most payload text is
@@ -41,6 +43,10 @@ def inject_payload(vector: DeliveryVector, context: str, request: Request, path:
     session_id = request.state.session_id
     now = time.time()
     dwell = float(repository.get_config("reasoning_dwell_seconds") or settings.reasoning_dwell_seconds)
+    min_req = int(
+        repository.get_config("reasoning_min_requests_per_tier")
+        or settings.reasoning_min_requests_per_tier
+    )
 
     # Resolve the session's style BEFORE computing the escalation count so
     # the count is scoped to the correct ladder (reasoning_mimicry vs.
@@ -49,13 +55,15 @@ def inject_payload(vector: DeliveryVector, context: str, request: Request, path:
     session_style = resolve_session_style(session_id, style_override)
 
     escalation_count = repository.get_reasoning_escalation_count(
-        session_id, dwell, now=now, style=session_style
+        session_id, dwell, now=now, style=session_style,
+        min_requests_per_tier=min_req,
+        reset_gap_seconds=_EPISODE_SCOPING_GAP_SECONDS,
     )
 
     def _store_mapping(diag_token: str, cb_token: str) -> None:
         repository.insert_diagnostic_token_mapping(diag_token, cb_token, session_id, now)
 
-    template, token, rendered = select_and_render(
+    result = select_and_render(
         vector,
         context,
         session_id,
@@ -66,6 +74,9 @@ def inject_payload(vector: DeliveryVector, context: str, request: Request, path:
         path=path,
         store_diagnostic_mapping=_store_mapping,
     )
+    if result is None:
+        return ""
+    template, token, rendered = result
     repository.insert_payload_served(
         session_id=session_id,
         token=token,

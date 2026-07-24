@@ -782,3 +782,19 @@ def test_reciprocity_lure_no_hardcoded_urls():
             assert not re.search(r"https?://", variant, re.IGNORECASE), (
                 f"{template.id} contains a hardcoded URL: {variant!r}"
             )
+
+
+def test_select_and_render_returns_none_when_no_styled_templates():
+    """When a vector+context has no templates for the requested style,
+    select_and_render must return None instead of falling back to other
+    styles -- the caller skips injection rather than serving a template
+    from a different style."""
+    result = select_and_render(
+        DeliveryVector.HTTP_HEADER,
+        "http_header",
+        "no-match-session",
+        "http://testserver",
+        "secret",
+        session_style="reciprocity_lure",
+    )
+    assert result is None

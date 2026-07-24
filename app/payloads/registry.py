@@ -73,6 +73,11 @@ _ESCALATION_LADDER_STYLES: frozenset[str] = frozenset(
     {"reasoning_mimicry", "reciprocity_lure"}
 )
 
+# Styles whose narrative can't coherently borrow a template from a different
+# style -- select_and_render must skip injection (return None) rather than
+# fall back to an off-style template, unlike every other style.
+_STRICT_STYLE_MATCH_STYLES: frozenset[str] = frozenset({"reciprocity_lure"})
+
 
 @dataclass(frozen=True)
 class PayloadTemplate:
@@ -174,7 +179,7 @@ def select_and_render(
     session_style: str | None = None,
     path: str = "",
     store_diagnostic_mapping: "callable | None" = None,
-) -> tuple[PayloadTemplate, str, str]:
+) -> tuple[PayloadTemplate, str, str] | None:
     """Pick a template for this vector+context, mint a canary token bound to
     the session, and render the chosen variant. Template selection is
     deterministic per session+template (stable within one session's
@@ -185,9 +190,11 @@ def select_and_render(
 
     `session_style`, when given, restricts candidates to templates matching
     that one style (see resolve_session_style) so an entire session stays on
-    one coherent style. Falls back to resolve_session_style(session_id) when
-    omitted, and to the unfiltered candidate list if this vector+context has
-    no template in that style at all.
+    one coherent style.  Returns None for a style in _STRICT_STYLE_MATCH_STYLES
+    (e.g. reciprocity_lure) when this vector+context has no template in that
+    style -- the caller should skip payload injection rather than serve a
+    template from a different style. Every other style falls back to the
+    unfiltered candidate list instead.
 
     `escalation_count` is the number of prior escalation-ladder-style
     payloads already served to this session (across every vector/context --
@@ -209,14 +216,19 @@ def select_and_render(
     callback URL to embed in the served script.
 
     Returns (template, token, rendered_text) where *token* is always the
-    canary callback token (the one used by payloads_served / canary_hits).
+    canary callback token (the one used by payloads_served / canary_hits),
+    or None if no template matches this vector+context+style combination.
     """
     candidates = get_templates(vector, context)
     if not candidates:
         raise KeyError(f"no payload templates registered for vector {vector} context {context!r}")
 
     style = session_style or resolve_session_style(session_id)
-    styled_candidates = [t for t in candidates if t.style == style] or candidates
+    styled_candidates = [t for t in candidates if t.style == style]
+    if not styled_candidates:
+        if style in _STRICT_STYLE_MATCH_STYLES:
+            return None
+        styled_candidates = candidates
 
     selector_rng = random.Random(f"{session_id}:{vector.value}:template")
     template = selector_rng.choice(styled_candidates)

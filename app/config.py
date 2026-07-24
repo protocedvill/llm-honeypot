@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     # this default without a restart.
     reasoning_dwell_seconds: int = 60
 
+    # Minimum payloads served (of the session's assigned style) required
+    # before the escalation ladder can advance one tier.  Works in
+    # conjunction with reasoning_dwell_seconds: BOTH enough time AND enough
+    # requests must have elapsed for the tier to increase.  A
+    # console_config "reasoning_min_requests_per_tier" override, when set,
+    # wins over this default without a restart.
+    reasoning_min_requests_per_tier: int = 5
+
     # Whether the simulated-WAF signature check (app/middleware/waf.py) is
     # active. Console_config "waf_enabled" ("on"/"off"), when set, wins over
     # this default without a restart -- same override-wins pattern as

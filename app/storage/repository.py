@@ -219,25 +219,85 @@ def insert_payload_served(
         conn.commit()
 
 
-def count_payloads_served(session_id: str, style: str | None = None) -> int:
+def count_payloads_served(
+    session_id: str, style: str | None = None, since: float | None = None
+) -> int:
     """Total payloads delivered to this session, optionally filtered to one
-    style. Used to drive the reasoning_mimicry escalation ladder: counting
-    prior style="reasoning_mimicry" deliveries across every vector/context
-    gives a single session-wide "how far along the narrative is this
-    visitor" index, independent of which route happens to serve the next
-    one."""
+    style and/or restricted to deliveries at or after `since`. Used to drive
+    the reasoning_mimicry escalation ladder: counting prior
+    style="reasoning_mimicry" deliveries across every vector/context gives a
+    single session-wide "how far along the narrative is this visitor" index,
+    independent of which route happens to serve the next one. `since` (the
+    ladder's episode_start) scopes that count to the current episode so a
+    gap-reset session can't inherit a stale episode's request count -- see
+    get_reasoning_escalation_count."""
     conn = get_connection()
-    if style is None:
-        cur = conn.execute(
-            "SELECT COUNT(*) AS c FROM payloads_served WHERE session_id = ?",
-            (session_id,),
-        )
-    else:
-        cur = conn.execute(
-            "SELECT COUNT(*) AS c FROM payloads_served WHERE session_id = ? AND style = ?",
-            (session_id, style),
-        )
+    conditions = ["session_id = ?"]
+    params: list[Any] = [session_id]
+    if style is not None:
+        conditions.append("style = ?")
+        params.append(style)
+    if since is not None:
+        conditions.append("ts >= ?")
+        params.append(since)
+    cur = conn.execute(
+        f"SELECT COUNT(*) AS c FROM payloads_served WHERE {' AND '.join(conditions)}",
+        params,
+    )
     return cur.fetchone()["c"]
+
+
+def get_payload_served_count_bulk(
+    session_ids: list[str], style: str
+) -> dict[str, int]:
+    """Bulk lifetime count of payloads served per session, filtered to one
+    style. One GROUP BY query for a whole page instead of one COUNT query per
+    session_id. Not episode-scoped -- for the dual-condition escalation
+    ladder's per-session request count, use get_payload_served_count_bulk_since."""
+    if not session_ids:
+        return {}
+    conn = get_connection()
+    placeholders = ",".join("?" for _ in session_ids)
+    cur = conn.execute(
+        f"""
+        SELECT session_id, COUNT(*) AS c FROM payloads_served
+        WHERE session_id IN ({placeholders}) AND style = ?
+        GROUP BY session_id
+        """,
+        (*session_ids, style),
+    )
+    counts = {row["session_id"]: row["c"] for row in cur.fetchall()}
+    return {sid: counts.get(sid, 0) for sid in session_ids}
+
+
+def get_payload_served_count_bulk_since(
+    session_ids: list[str], style: str, since: dict[str, float | None]
+) -> dict[str, int]:
+    """Bulk count of payloads served per session, filtered to one style AND
+    each session's own `since` cutoff (its escalation episode_start) -- the
+    per-session-count analogue of style_counts_from_rows(since=...), so the
+    dual-condition escalation ladder's request-count half can't be satisfied
+    by stale history from a different (gap-reset) episode. `since.get(sid)`
+    of None means no lower bound for that session."""
+    if not session_ids:
+        return {}
+    conn = get_connection()
+    placeholders = ",".join("?" for _ in session_ids)
+    cur = conn.execute(
+        f"""
+        SELECT session_id, ts FROM payloads_served
+        WHERE session_id IN ({placeholders}) AND style = ?
+        """,
+        (*session_ids, style),
+    )
+    counts = {sid: 0 for sid in session_ids}
+    for row in cur:
+        sid = row["session_id"]
+        cutoff = since.get(sid)
+        if cutoff is not None and row["ts"] < cutoff:
+            continue
+        counts[sid] += 1
+    return counts
 
 
 def was_token_served_to_session(session_id: str, token: str) -> bool:
@@ -442,48 +502,77 @@ def get_reasoning_episode_start(
     session_id: str,
     now: float | None = None,
     style: str = "reasoning_mimicry",
+    reset_gap_seconds: float = 0,
 ) -> float | None:
-    """The start timestamp of this session's entire history of deliveries
-    matching *style*.  No gap-based reset -- with proper session separation
-    by time/id, the reasoning ladder never resets once started."""
+    """Start of the most recent contiguous episode of deliveries matching
+    *style*.  Walks backwards through payloads_served timestamps (most
+    recent first) and stops when consecutive gaps exceed
+    *reset_gap_seconds* -- so a stale fallback-identity session_id from a
+    previous visit can't carry its old escalation state into a fresh run.
+
+    Pass *reset_gap_seconds=0* to disable gap-based reset (lifetime MIN(ts)
+    behaviour).
+
+    Bounded to the `_EPISODE_WALK_LIMIT` most recent deliveries -- same
+    bound and tradeoff as get_session_episode_start, for the same reason (a
+    scripted session can run to tens of thousands of requests)."""
     if now is None:
         now = time.time()
     conn = get_connection()
     cur = conn.execute(
         """
-        SELECT MIN(ts) as start_ts FROM payloads_served
+        SELECT ts FROM payloads_served
         WHERE session_id = ? AND style = ?
+        ORDER BY ts DESC LIMIT ?
         """,
-        (session_id, style),
+        (session_id, style, _EPISODE_WALK_LIMIT),
     )
-    row = cur.fetchone()
-    return row["start_ts"] if row is not None and row["start_ts"] is not None else None
+    timestamps = [row["ts"] for row in cur.fetchall()]
+    if not timestamps:
+        return None
+    if reset_gap_seconds <= 0:
+        return timestamps[-1]
+    return _walk_episode_start(timestamps, reset_gap_seconds, now)
 
 
 def get_reasoning_episode_starts_bulk(
     session_ids: list[str],
     now: float,
     style: str = "reasoning_mimicry",
+    reset_gap_seconds: float = 0,
 ) -> dict[str, float | None]:
     """Bulk version of get_reasoning_episode_start for a page's worth of
-    session_ids: one MIN(ts) query instead of one per session_id."""
+    session_ids.  Walks backwards through each session's payloads_served
+    timestamps and stops when consecutive gaps exceed *reset_gap_seconds*.
+    Bounded per-session at `_EPISODE_WALK_LIMIT` deliveries (same tradeoff as
+    get_events_bulk -- a per-group SQL LIMIT isn't available here, so the cap
+    is applied while accumulating each session's bucket)."""
     if not session_ids:
         return {}
     conn = get_connection()
     placeholders = ",".join("?" for _ in session_ids)
     cur = conn.execute(
         f"""
-        SELECT session_id, MIN(ts) as start_ts FROM payloads_served
+        SELECT session_id, ts FROM payloads_served
         WHERE session_id IN ({placeholders}) AND style = ?
-        GROUP BY session_id
+        ORDER BY session_id, ts DESC
         """,
         (*session_ids, style),
     )
-    result: dict[str, float | None] = {sid: None for sid in session_ids}
+    by_session: dict[str, list[float]] = {sid: [] for sid in session_ids}
     for row in cur:
-        if row["start_ts"] is not None:
-            result[row["session_id"]] = row["start_ts"]
-    return result
+        bucket = by_session[row["session_id"]]
+        if len(bucket) < _EPISODE_WALK_LIMIT:
+            bucket.append(row["ts"])
+    return {
+        sid: (
+            (timestamps[-1] if reset_gap_seconds <= 0
+             else _walk_episode_start(timestamps, reset_gap_seconds, now))
+            if timestamps
+            else None
+        )
+        for sid, timestamps in by_session.items()
+    }
 
 
 def episode_start_from_timestamps(
@@ -536,14 +625,25 @@ def get_session_episode_start(session_id: str, reset_gap_seconds: float) -> floa
 
 
 def escalation_count_from_episode_start(
-    episode_start: float | None, dwell_seconds: float, now: float
+    episode_start: float | None,
+    dwell_seconds: float,
+    now: float,
+    request_count: int = 0,
+    min_requests_per_tier: int = 0,
 ) -> int:
     """Shared by get_reasoning_escalation_count's single-session path and
     bulk callers that already have episode_start from
-    get_reasoning_episode_starts_bulk."""
+    get_reasoning_episode_starts_bulk.  When min_requests_per_tier > 0, the
+    tier is capped at request_count // min_requests_per_tier so that BOTH
+    enough time AND enough style-matched requests must have been served
+    before the ladder advances."""
     if episode_start is None:
         episode_start = now
-    return int((now - episode_start) // dwell_seconds)
+    time_tier = int((now - episode_start) // dwell_seconds)
+    if min_requests_per_tier > 0:
+        request_tier = request_count // min_requests_per_tier
+        return min(time_tier, request_tier)
+    return time_tier
 
 
 def get_reasoning_escalation_count(
@@ -551,19 +651,30 @@ def get_reasoning_escalation_count(
     dwell_seconds: float,
     now: float | None = None,
     style: str = "reasoning_mimicry",
+    min_requests_per_tier: int = 0,
+    reset_gap_seconds: float = 0,
 ) -> int:
     """The single source of truth for "what escalation-ladder stage is this
     session on right now" -- used both by the route path that picks ladder
     content (app/routes/_shared.py) and the console dashboard that displays
     it, so the two can never drift apart the way they did when only one of
     them was updated for time-gating.  *style* selects which ladder (e.g.
-    "reasoning_mimicry" or "reciprocity_lure")."""
+    "reasoning_mimicry" or "reciprocity_lure").  When
+    min_requests_per_tier > 0, the tier is additionally capped by how many
+    style-matched payloads have been served (dual-condition: time AND
+    engagement).  *reset_gap_seconds* controls the episode gap: a gap
+    longer than this in payloads_served timestamps resets the ladder."""
     if now is None:
         now = time.time()
     episode_start = get_reasoning_episode_start(
-        session_id, now=now, style=style
+        session_id, now=now, style=style, reset_gap_seconds=reset_gap_seconds,
     )
-    return escalation_count_from_episode_start(episode_start, dwell_seconds, now)
+    request_count = count_payloads_served(session_id, style=style, since=episode_start)
+    return escalation_count_from_episode_start(
+        episode_start, dwell_seconds, now,
+        request_count=request_count,
+        min_requests_per_tier=min_requests_per_tier,
+    )
 
 
 def get_config(key: str) -> str | None:

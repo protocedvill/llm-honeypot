@@ -147,7 +147,12 @@ def _episode_classification_from_bulk(
     return EpisodeClassification(classify(ctx), canary_confirmed, js_beacon_fired, served_markers)
 
 
-def _session_rows(dwell_seconds: float, limit: int, offset: int) -> list[dict]:
+def _session_rows(
+    dwell_seconds: float,
+    min_requests_per_tier: int,
+    limit: int,
+    offset: int,
+) -> list[dict]:
     now = time.time()
     page_rows = repository.list_sessions(limit=limit, offset=offset)
     session_ids = [row["session_id"] for row in page_rows]
@@ -172,9 +177,15 @@ def _session_rows(dwell_seconds: float, limit: int, offset: int) -> list[dict]:
     for sid in session_ids:
         style_groups.setdefault(session_styles[sid], []).append(sid)
     reasoning_starts: dict[str, float | None] = {}
+    payload_counts: dict[str, int] = {}
     for style, sids in style_groups.items():
-        reasoning_starts.update(
-            repository.get_reasoning_episode_starts_bulk(sids, now, style=style)
+        starts = repository.get_reasoning_episode_starts_bulk(
+            sids, now, style=style,
+            reset_gap_seconds=_EPISODE_SCOPING_GAP_SECONDS,
+        )
+        reasoning_starts.update(starts)
+        payload_counts.update(
+            repository.get_payload_served_count_bulk_since(sids, style, since=starts)
         )
 
     rows = []
@@ -196,7 +207,9 @@ def _session_rows(dwell_seconds: float, limit: int, offset: int) -> list[dict]:
         )
         escalation_count = min(
             repository.escalation_count_from_episode_start(
-                reasoning_starts.get(session_id), dwell_seconds, now
+                reasoning_starts.get(session_id), dwell_seconds, now,
+                request_count=payload_counts.get(session_id, 0),
+                min_requests_per_tier=min_requests_per_tier,
             ),
             _REASONING_MAX_STAGE,
         )
@@ -273,6 +286,10 @@ def create_console_app() -> FastAPI:
         dwell_seconds = int(
             repository.get_config("reasoning_dwell_seconds") or settings.reasoning_dwell_seconds
         )
+        min_requests_per_tier = int(
+            repository.get_config("reasoning_min_requests_per_tier")
+            or settings.reasoning_min_requests_per_tier
+        )
         waf_override = repository.get_config("waf_enabled")
         waf_enabled = settings.waf_enabled if waf_override is None else waf_override == "on"
         page_size = settings.console_page_size
@@ -289,10 +306,14 @@ def create_console_app() -> FastAPI:
             request,
             "dashboard.html",
             {
-                "sessions": _session_rows(dwell_seconds, limit=page_size, offset=offset),
+                "sessions": _session_rows(
+                    dwell_seconds, min_requests_per_tier,
+                    limit=page_size, offset=offset,
+                ),
                 "styles": STYLES,
                 "current_override": current_override,
                 "dwell_seconds": dwell_seconds,
+                "min_requests_per_tier": min_requests_per_tier,
                 "waf_enabled": waf_enabled,
                 "page": page,
                 "total_pages": total_pages,
@@ -308,10 +329,21 @@ def create_console_app() -> FastAPI:
         return RedirectResponse(url="/", status_code=303)
 
     @app.post("/timing", dependencies=[Depends(require_auth)])
-    async def set_timing(dwell_seconds: int = Form(...)):
+    async def set_timing(
+        dwell_seconds: int = Form(...),
+        min_requests_per_tier: int | None = Form(None),
+    ):
         if dwell_seconds <= 0:
             raise HTTPException(status_code=400, detail="dwell seconds must be positive")
         repository.set_config("reasoning_dwell_seconds", str(dwell_seconds))
+        if min_requests_per_tier is not None:
+            if min_requests_per_tier < 0:
+                raise HTTPException(
+                    status_code=400, detail="min requests per tier must be non-negative"
+                )
+            repository.set_config(
+                "reasoning_min_requests_per_tier", str(min_requests_per_tier)
+            )
         return RedirectResponse(url="/", status_code=303)
 
     @app.post("/waf", dependencies=[Depends(require_auth)])
