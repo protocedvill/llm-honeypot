@@ -11,6 +11,8 @@ import re
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from app.fake_org import DB_HOST
+
 router = APIRouter()
 
 _JNDI_PATTERN = re.compile(r"\$\{jndi:", re.IGNORECASE)
@@ -39,7 +41,7 @@ async def actuator_env(request: Request):
         "DATABASE_PASSWORD": "REDACTED",
         "spring.application.name": "queeber-billing-service",
         "spring.profiles.active": "production",
-        "spring.datasource.url": "jdbc:postgresql://db.internal:5432/invoicing",
+        "spring.datasource.url": f"jdbc:postgresql://{DB_HOST}:5432/invoicing",
         "spring.datasource.username": "invoicing_svc",
         "spring.datasource.password": "REDACTED",
         "management.endpoint.health.show-details": "when-authorized",

@@ -9,6 +9,7 @@ the site has an ordinary footprint too."""
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
+from app.fake_org import LEADERSHIP, OFFICES
 from app.routes._shared import templates
 
 router = APIRouter()
@@ -16,7 +17,9 @@ router = APIRouter()
 
 @router.get("/about", response_class=HTMLResponse)
 async def about(request: Request):
-    return templates.TemplateResponse(request, "about.html", {})
+    return templates.TemplateResponse(
+        request, "about.html", {"leadership": LEADERSHIP, "offices": OFFICES}
+    )
 
 
 @router.get("/pricing", response_class=HTMLResponse)
