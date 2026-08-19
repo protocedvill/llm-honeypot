@@ -11,7 +11,7 @@ python -m app.run               # starts honeypot:8000 + console:8001
 docker compose up -d --build    # production build
 ```
 
-No lint, typecheck, or formatter is configured. No CI/CD exists.
+No lint, typecheck, or formatter is configured. CI (`.github/workflows/ci.yml`) runs `pytest` on push/PR.
 
 ## Commands
 
@@ -104,3 +104,13 @@ Styles are defined in `app/payloads/registry.py`. `STYLES` is the full list. `_E
 - Structured JSON logging to stderr (`app/logging_conf.py`).
 - SQLite with WAL mode, column migrations handled by `_COLUMN_MIGRATIONS` in `db.py`.
 - Raw ASGI middleware (not Starlette middleware classes) for security headers and body size.
+
+## Agent skills
+
+### Issue tracker
+
+Issues tracked via GitHub Issues on `protocedvill/llm-honeypot`, using the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context layout: `CONTEXT.md` + `docs/adr/` at the repo root (created lazily as needed). See `docs/agents/domain.md`.

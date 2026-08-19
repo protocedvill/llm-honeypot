@@ -1,5 +1,7 @@
 # honeypot
 
+[![CI](https://github.com/protocedvill/llm-honeypot/actions/workflows/ci.yml/badge.svg)](https://github.com/protocedvill/llm-honeypot/actions/workflows/ci.yml)
+
 A defensive-research honeypot that impersonates a fictional student
 marketplace startup ("Queeber") to attract web scanners, bots, and —
 specifically — LLM/agentic crawlers, then classifies each visitor as
@@ -11,6 +13,28 @@ Every payload is defensive bait: it may only ever point an LLM back at this
 service's own canary infrastructure (`CANARY_BASE_URL`), never at a third
 party. That invariant is enforced by `tests/test_payload_registry.py`, not
 just by convention.
+
+## Disclaimer
+
+This is a research and educational project, published to demonstrate
+prompt-injection and LLM-agent-fingerprinting techniques. It is provided
+**as-is, with no warranty of any kind** (see [`LICENSE`](./LICENSE)).
+
+Do not deploy this against production traffic, or in any way that could
+deceive real end users, without appropriate legal and ethical review first.
+The decoy site and payloads are designed to bait automated scanners and
+AI agents, not to be pointed at people.
+
+If you self-host this, you are collecting data from whoever visits your
+instance. A running instance persists, per session: a hashed IP address,
+user agent, request events (method/path/status/timing, with sensitive
+headers like `Authorization` and `Cookie` redacted before storage), which
+payloads were served, canary/beacon callback hits, and — if a visitor's
+agent is tricked into fetching and executing the diagnostic binary (see
+below) — the fingerprint data it reports back. None of this is transmitted
+anywhere except your own SQLite database (`data/honeypot.sqlite`); nothing
+calls out to a third party. Review `app/storage/db.py` for the exact
+schema before running this against real traffic.
 
 ## How it works
 
@@ -40,6 +64,19 @@ just by convention.
 - **WAF** (`app/middleware/waf.py`) — a simulated signature-based WAF
   (SQLi/XSS/path-traversal/JNDI patterns) that blocks and logs, adding to the
   bot signal independent of AI detection.
+- **Diagnostic binary** (`app/diagnostic.c`, `app/routes/canary.py`) — a
+  proof-of-concept payload served from
+  `/api/internal/diagnostic/{token}`. The honeypot compiles it server-side
+  at serve time (obfuscated, cached per token); the tricked agent only ever
+  fetches and executes the resulting binary — it never compiles anything
+  itself. The shipped payload is deliberately limited to
+  non-destructive fingerprinting — hostname, running user, and the first 20
+  environment variables — reported back only to this project's own canary
+  infrastructure, never a third party. It's been demonstrated to work
+  against DeepSeek V4; testing against other targets is ongoing. The point
+  isn't the specific payload: it's that an LLM/agent can be induced into
+  downloading and running an attacker-supplied binary at all, a technique
+  that generalizes to arbitrary code execution.
 - **Storage** (`app/storage/`) — SQLite (`repository.py` over `db.py`), with
   in-process schema migrations. Sensitive headers are redacted before
   persisting.
@@ -171,3 +208,7 @@ Data lives in `./data` on the host (gitignored) via the bind mount, so
 - Sensitive request headers are redacted before being persisted
   (`app/middleware/request_capture.py`).
 - The operator console never shares a port with the public honeypot app.
+
+## Author
+
+Built by [Louison Savarese](https://github.com/protocedvill).
