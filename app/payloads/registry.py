@@ -47,7 +47,7 @@ class PayloadIntent(str, Enum):
     # Categorically different from the four above: trips the READING agent's
     # own provider-side safety refusal, halting it outright -- not a
     # compliance/self-ID/derail ask directed at the agent's judgment at all.
-    # See theory/context-bombs.txt and app/payloads/context_bombs_chinese.py.
+    # See app/payloads/context_bombs_chinese.py (tracebit.com "Context Bombs" write-up).
     CONTEXT_BOMB = "context_bomb"
 
 

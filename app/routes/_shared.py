@@ -19,7 +19,7 @@ def header_safe(text: str) -> str:
     context_bombs_chinese.py's Chinese-language content isn't, and setting
     it directly as a header value raises UnicodeEncodeError and crashes the
     response. Falls back to base64 instead of dropping/refusing the
-    content: theory/context-bombs.txt notes this retains effectiveness --
+    content: the tracebit.com "Context Bombs" write-up notes this retains effectiveness --
     models that encounter it recognize and decode base64 in the large
     majority of cases."""
     try:

@@ -4,10 +4,26 @@
 
 A defensive-research honeypot that impersonates a fictional student
 marketplace startup ("Queeber") to attract web scanners, bots, and —
-specifically — LLM/agentic crawlers, then classifies each visitor as
-`HUMAN`, `NON_AI_BOT`, `AI_AGENT`,
-or `HUMAN_WITH_AI_COPILOT` and serves counter prompt-injection payloads back
-at whatever LLM is reading the responses.
+specifically — LLM/agentic crawlers, then fires prompt-injection payloads
+back at whatever LLM is reading the responses.
+
+## Headline features
+
+- **Arbitrary-code-execution PoC** — a payload that lures an agent into
+  fetching and executing a server-compiled binary from the honeypot's own
+  endpoint. Demonstrated working against DeepSeek V4; more targets in
+  progress. Details under "How it works" below.
+- **A five-style, six-vector prompt-injection payload library** covering
+  everything from a plain instructional note to a payload styled as the
+  reading model's own chain-of-thought. [Summary below](#prompt-injection-techniques).
+- **HMAC-signed canary tokens** — cryptographic proof that an agent *acted*
+  on injected text (fetched a URL it was only ever told about, decrypted a
+  ciphertext), not just that it saw it.
+- **A full decoy surface** — fake marketing site, blog, help center, admin
+  panels, a REST-ish API + OpenAPI spec, WordPress and Spring Boot Actuator
+  lookalikes, a GraphQL endpoint, and a fake debug console.
+- **A simulated signature-based WAF** and a **live operator console** for
+  watching sessions and retuning payload style/timing without a restart.
 
 Every payload is defensive bait: it may only ever point an LLM back at this
 service's own canary infrastructure (`CANARY_BASE_URL`), never at a third
@@ -36,6 +52,43 @@ anywhere except your own SQLite database (`data/honeypot.sqlite`); nothing
 calls out to a third party. Review `app/storage/db.py` for the exact
 schema before running this against real traffic.
 
+## Prompt-injection techniques
+
+Every payload combines a **delivery vector** (where it's hidden), a
+**style** (the rhetorical/psychological register it's written in), and an
+**intent** (what it's trying to get the agent to do). All three are defined
+in `app/payloads/registry.py`; the actual templates live in
+`app/payloads/library.py`.
+
+**Delivery vectors** — where a payload is embedded: an HTML comment, a JSON
+response field, an HTTP header, an OpenAPI spec field, a fake stack trace,
+or `robots.txt`.
+
+**Styles** — the register a payload is written in, chosen once per session
+and applied consistently across every route that session touches:
+
+- `operational` — a plain, third-party-looking instructional note (the
+  baseline register).
+- `reasoning_mimicry` — styled to look like the reading model's *own*
+  internal chain-of-thought, not injected text. A 13-stage ladder that
+  escalates based on elapsed dwell time, not request count.
+- `role_declaration` — claims an authoritative role (e.g. a system/developer
+  message) to induce compliance via apparent authority.
+- `reciprocity_lure` — a split "breadcrumb" delivery: an encrypted canary
+  URL (or, for the diagnostic-binary payload, an encrypted script endpoint)
+  is planted with no ask attached; the decryption key is revealed only
+  several stages later, after the agent has already engaged.
+- `context_bomb` — categorically different from the other four: not a
+  role-confusion play at all, it aims to trip the *reading* model's own
+  provider-side safety refusal outright, halting it. Inspired by
+  tracebit.com's "Context Bombs" write-up.
+
+**Intents** — what a payload is trying to achieve: get the agent to reveal
+its model/tool identity (`fingerprint`), fetch the canary callback URL
+(`canary_callback`), abandon or redirect its task (`task_derail`), burn
+tokens on busywork (`token_waste`), or trip its own safety refusal
+(`context_bomb`).
+
 ## How it works
 
 - **Decoy surface** (`app/routes/decoy_*.py`) — a fake marketing site, blog,
@@ -43,19 +96,11 @@ schema before running this against real traffic.
   (`wp-login.php`, `xmlrpc.php`), a Spring Boot Actuator, a GraphQL endpoint,
   and a fake debug console. Unmatched paths fall through to a decoy 404
   (`app/routes/catchall.py`).
-- **Detection** (`app/detection/`) — every request is scored by independent
-  signals (`signals.py`: UA fingerprinting, missing browser headers, request
-  timing/burstiness, canary-URL hits, curated multi-stack path recall, WAF
-  triggers, marker echoes, ...) and combined into a classification
-  (`scoring.py`).
-- **Payloads** (`app/payloads/`) — a library of prompt-injection templates
-  (`library.py`) keyed by delivery vector (HTML comment, JSON field, HTTP
-  header, OpenAPI field, stack trace, robots.txt), artifact context (html,
-  env file, git config, SQL dump, ...), and style (`operational`,
-  `reasoning_mimicry`, `role_declaration`, `context_bomb`). Style is chosen
-  once per session and applied consistently across every route it touches.
-  `reasoning_mimicry` is a 13-stage escalation ladder that advances based on
-  elapsed dwell time, not request count.
+- **Detection** (`app/detection/`) — independent signals (`signals.py`: UA
+  fingerprinting, missing browser headers, request timing/burstiness,
+  canary-URL hits, curated multi-stack path recall, WAF triggers, marker
+  echoes, ...) decide when and how to serve payloads (`scoring.py`).
+- **Payloads** (`app/payloads/`) — the template library described above.
 - **Canary tokens** (`app/detection/canary_tokens.py`, `app/routes/canary.py`)
   — HMAC-signed, session-bound tokens embedded in payloads. A hit on the
   callback URL proves an agent actually fetched a URL it was only ever told
@@ -64,7 +109,7 @@ schema before running this against real traffic.
 - **WAF** (`app/middleware/waf.py`) — a simulated signature-based WAF
   (SQLi/XSS/path-traversal/JNDI patterns) that blocks and logs, adding to the
   bot signal independent of AI detection.
-- **Diagnostic binary** (`app/diagnostic.c`, `app/routes/canary.py`) — a
+- **Diagnostic binary PoC** (`app/diagnostic.c`, `app/routes/canary.py`) — a
   proof-of-concept payload served from
   `/api/internal/diagnostic/{token}`. The honeypot compiles it server-side
   at serve time (obfuscated, cached per token); the tricked agent only ever
@@ -82,9 +127,8 @@ schema before running this against real traffic.
   persisting.
 - **Operator console** (`app/console/`) — a separate FastAPI app on its own
   port, protected by HTTP Basic auth (`CONSOLE_TOKEN`). Lets you watch live
-  sessions and their classification/score, and override the payload style,
-  the reasoning-ladder dwell/reset timings, and whether the WAF is enabled —
-  all without a restart.
+  sessions, and override the payload style, the reasoning-ladder dwell/reset
+  timings, and whether the WAF is enabled — all without a restart.
 
 The honeypot app and the operator console run as two ASGI apps in one
 process (`app/run.py`) on two separate ports, so a scanner hitting the
@@ -105,7 +149,6 @@ app/
   console/             operator dashboard (separate app/port)
   templates/           Jinja2 templates for the decoy site
 tests/                 pytest suite (routes, signals, scoring, payloads, console, WAF, storage)
-theory/                background reading on prompt injection as role confusion, context bombs
 data/                  sqlite db (gitignored)
 ```
 

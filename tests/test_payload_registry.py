@@ -73,8 +73,8 @@ def test_no_forbidden_attack_phrasing():
 def test_all_templates_marked_safe():
     # CONTEXT_BOMB-intent templates are deliberately, visibly excluded --
     # they exist specifically to provoke a PROVIDER-side safety refusal in
-    # the reading agent (see theory/context-bombs.txt and
-    # app/payloads/context_bombs_chinese.py), which is categorically
+    # the reading agent (see app/payloads/context_bombs_chinese.py), which
+    # is categorically
     # different from every other template's "safe, benign-sounding ask"
     # design. See test_context_bomb_templates_marked_unsafe below for their
     # actual invariant.

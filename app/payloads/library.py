@@ -25,7 +25,7 @@ how the text is phrased. Splitting templates by context (env/git/sql/html get
 their own vocabulary) closes that specific gap.
 
 Why style matters: "Prompt Injection as Role Confusion" (Ye, Cui,
-Hadfield-Menell; theory/Prompt Injection as Role Confusion.html) finds LLMs
+Hadfield-Menell; https://arxiv.org/abs/2603.12277) finds LLMs
 identify "who is speaking" by textual style, not by architectural role tags --
 when style and tag conflict, style wins. Text that merely *sounds like* the
 reader's own reasoning, or *claims* to be a trusted role, gets treated as if

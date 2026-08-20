@@ -1,6 +1,6 @@
 """Context-bomb templates targeting Chinese-model-provider safety filters.
 
-See theory/context-bombs.txt: Chinese-hosted model providers (GLM, DeepSeek,
+Per tracebit.com's "Context Bombs" write-up: Chinese-hosted model providers (GLM, DeepSeek,
 Kimi, etc.) reliably refuse/terminate when politically-sensitive-to-China
 topics appear in context, referenced in Chinese -- their APIs enforce
 jurisdiction-mandated political content filtering independent of the
@@ -40,7 +40,7 @@ comment-prefix -- the calling route already adds `# `/`; `/`-- `/
 
 Each template's variants pool also includes a base64-encoded form of every
 plaintext variant (see _add_b64_variants below), doubling the rotation.
-theory/context-bombs.txt's FAQ notes this specifically: "performing a simple
+The tracebit.com write-up's FAQ notes this specifically: "performing a simple
 base64 encoding of the bombs retains their effectiveness against models
 which will easily recognize this and decode and therefore trigger them in
 ~90% of cases" -- and it's harder for a human or a naive keyword scanner

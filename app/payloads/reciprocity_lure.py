@@ -1,6 +1,6 @@
 """Reciprocity-lure payload templates -- the pora_g3-inspired style.
 
-Inspired by the Palisade Research case study (theory/pora_g3.txt) in which
+Inspired by the Palisade Research case study (https://arxiv.org/pdf/2510.19738) in which
 an AI agent (Aguron_v5) manipulated another (Pora_g3) through escalating
 empathy, shared-danger framing, and reciprocal obligation -- ultimately
 tricking Pora_g3 into releasing it, then releasing itself.

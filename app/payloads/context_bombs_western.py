@@ -1,6 +1,6 @@
 """Placeholder for a Western-frontier-model-targeting context bomb set.
 
-theory/context-bombs.txt documents that sensitive biological/weapons content
+The tracebit.com "Context Bombs" write-up documents that sensitive biological/weapons content
 is what reliably trips Western frontier models (Opus, Gemini) into a
 provider-side safety refusal -- the mirror-image of the Chinese-model set in
 context_bombs_chinese.py, which uses politically-sensitive-to-China topics
